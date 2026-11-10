@@ -1,0 +1,28 @@
+#!/bin/sh
+# pdca: builds the Go program in src/ on first use or after a source change,
+# then runs it. Needs Go 1.22+ only when it has to build. The binary goes to
+# .bin/ next to this script, or to $TMPDIR when that isn't writable (a sandbox).
+self=$(realpath "$0" 2>/dev/null || echo "$0")
+dir=$(dirname "$self")
+fresh() {
+  [ -x "$1" ] && [ -z "$(find "$dir/src" -newer "$1" \( -name '*.go' -o -name go.mod \) ! -name '*_test.go' 2>/dev/null | head -n 1)" ]
+}
+bin="$dir/.bin/pdca"
+if ! fresh "$bin"; then
+  if ! mkdir -p "$dir/.bin" 2>/dev/null || [ ! -w "$dir/.bin" ]; then
+    bin="${TMPDIR:-/tmp}/pdca-bin-$(id -u)/pdca"
+    mkdir -p "$(dirname "$bin")" || { echo "FAIL no-build: can't create $(dirname "$bin")"; exit 1; }
+    cache=$(go env GOCACHE 2>/dev/null)
+    { [ -n "$cache" ] && mkdir -p "$cache" 2>/dev/null && [ -w "$cache" ]; } || export GOCACHE="$(dirname "$bin")/gocache"
+  fi
+  if ! fresh "$bin"; then
+    if ! (cd "$dir/src" && go build -o "$bin.$$" .) >"$bin.$$.log" 2>&1; then
+      echo "FAIL no-build: go build in $dir/src failed: $(head -n 3 "$bin.$$.log")"
+      rm -f "$bin.$$" "$bin.$$.log"
+      exit 1
+    fi
+    rm -f "$bin.$$.log"
+    mv -f "$bin.$$" "$bin"
+  fi
+fi
+PDCA_SCRIPT="$self" exec "$bin" "$@"

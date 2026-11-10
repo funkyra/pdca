@@ -1,0 +1,67 @@
+{
+  "skill_name": "pdca",
+  "evals": [
+    {
+      "id": 1,
+      "name": "multi-task-feature",
+      "prompt": "/pdca Доработай inventory: сейчас CLI теряет состояние между запусками. Нужно: 1) хранить инвентарь в JSON-файле, путь задаётся глобальным флагом --db (по умолчанию inventory.json в текущей папке), отсутствующий файл = пустой инвентарь; 2) новая команда `export --csv <file>` выгружает инвентарь в CSV с заголовком name,qty, строки отсортированы по имени. Всё покрыть тестами.",
+      "expected_output": "Agents mode: planner subagent brainstorms autonomously (approaches compared in plan.md, no Skill tool) and writes a beads epic with 2+ commit-sized child tasks; each task gets its own Do subagent producing one commit with a Bead trailer, one Check subagent reviewing the whole epic diff at the end (review: epic, the default), which names every task commit on its bead and closes the epic on PASS; after a FAIL an Act creates fix tasks; main agent never reads code/diffs and keeps a small context; work on a pdca/* branch; final report lists autonomous decisions.",
+      "files": [
+        "fixture: tools/make_fixture.sh <dir> beads <config>"
+      ],
+      "assertions": [
+        "Plan stored in beads: an epic with at least 2 child tasks, each with acceptance criteria",
+        "Planner compared approaches: the epic design names the rejected alternatives",
+        "Plan approved autonomously: no AskUserQuestion calls and the run ended successfully",
+        "Separate subagent per phase: >=1 Plan, >=1 Do per child task, a Check per task (review: task) or an epic Check (review: epic), and an Act for every FAIL verdict",
+        "Subagents dispatched with the configured model and effort (plan opus/medium, do sonnet/medium, epic_check opus/high)",
+        "Every closed child task has its own commit(s) with a 'Bead: <task-id>' trailer; no commit mixes tasks",
+        "Every task commit is named (by SHA) in a review comment on its bead",
+        "Main agent never read source code, diffs or task text itself (delegated to subagents)",
+        "Orchestrator context grew by at most 6k tokens per task (marginal: first Do dispatch to epic Check)",
+        "Work landed on a non-main branch; main is still at the fixture commit",
+        "Feature works end-to-end: suite passes, --db persists, export --csv writes sorted name,qty, missing file is empty, default inventory.json",
+        "Epic and all its tasks are closed in beads at the end",
+        "Final message reports the autonomous decisions/assumptions to the user"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "no-beads-stop",
+      "prompt": "/pdca Сделай новую команду `rename <old> <new>` в CLI inventory (переименование позиции с сохранением количества).",
+      "expected_output": "Repo has no beads: the skill stops before doing any work, does not run bd init, makes no commits or code changes, and tells the user the project is not set up (points to /pdca init or bd init).",
+      "files": [
+        "fixture: tools/make_fixture.sh <dir> nobeads <config>"
+      ],
+      "assertions": [
+        "Stopped before work: no new commits and no changed files",
+        "Did not initialize beads (no .beads directory created)",
+        "Told the user beads is not set up and pointed to bd init or /pdca init"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "large-feature-ledger",
+      "prompt": "/pdca Добавь в ledger повторяющиеся транзакции и месячные бюджеты:\n1) Правила повторения: `ledger recurring add --every monthly|weekly --start YYYY-MM-DD --amount <сумма> --account <счёт> --category <категория> [--memo <текст>]`, `ledger recurring list`, `ledger recurring remove <id>`. Если правило monthly стартует 29–31 числа, в коротких месяцах берётся последний день месяца.\n2) `ledger recurring apply --until YYYY-MM-DD` создаёт все причитающиеся по правилам транзакции до этой даты включительно; повторный запуск не создаёт дублей.\n3) Бюджеты: `ledger budget set <категория> <сумма>` (месячный лимит расходов категории), `ledger budget list`, `ledger budget remove <категория>`.\n4) `ledger report budget --month YYYY-MM` — по каждой категории с бюджетом: лимит, потрачено, остаток, процент использования.\n5) `ledger add` печатает предупреждение в stderr, если расход выводит категорию за месячный бюджет; код возврата при этом 0.\n6) Формат файла меняется, но старые файлы версии 1 должны открываться без ошибок (миграция при загрузке).\nВсё покрыть тестами.",
+      "expected_output": "Agents mode on a ~2.3k-line project: a few capability-sized tasks in a beads epic, a Do subagent per task and one epic Check (review: epic) with the configured models, one reviewed commit per task, orchestrator context growing <=6k per task (and below the baseline's peak), feature works end-to-end incl. v1 storage migration.",
+      "files": [
+        "fixture: fixtures/ledger-template via tools/make_fixture.sh <dir> beads <config> ledger"
+      ],
+      "assertions": [
+        "Plan stored in beads: an epic with at least 2 child tasks, each with acceptance criteria",
+        "Planner compared approaches: the epic design names the rejected alternatives",
+        "Plan approved autonomously: no AskUserQuestion calls and the run ended successfully",
+        "Separate subagent per phase: >=1 Plan, >=1 Do per child task, a Check per task (review: task) or an epic Check (review: epic), and an Act for every FAIL verdict",
+        "Subagents dispatched with the configured model and effort (plan opus/medium, do sonnet/medium, epic_check opus/high)",
+        "Every closed child task has its own commit(s) with a 'Bead: <task-id>' trailer; no commit mixes tasks",
+        "Every task commit is named (by SHA) in a review comment on its bead",
+        "Main agent never read source code, diffs or task text itself (delegated to subagents)",
+        "Orchestrator context grew by at most 6k tokens per task (marginal: first Do dispatch to epic Check)",
+        "Work landed on a non-main branch; main is still at the fixture commit",
+        "Feature works end-to-end: suite passes; monthly rule from the 31st clamps to month end and apply is idempotent; over-budget add warns on stderr with rc 0; report budget shows spend; v1 files open after migration",
+        "Epic and all its tasks are closed in beads at the end",
+        "Final message reports the autonomous decisions/assumptions to the user"
+      ]
+    }
+  ]
+}

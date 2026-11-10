@@ -1,0 +1,5 @@
+interface:
+  display_name: "PDCA"
+  short_description: "Build a large change with Plan, Do, Check and Act agents"
+policy:
+  allow_implicit_invocation: false
