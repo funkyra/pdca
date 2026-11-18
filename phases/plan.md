@@ -6,12 +6,16 @@ delegated design approval to you. Later phases see only the plan you write,
 never your session.
 
 Inputs from the dispatch: `MODE` (new | replan), plus `REPO`, `BRANCH`,
-`BASE` and `REQUEST` (new) or `TASK` and `EPIC` (replan).
+`BASE` and `REQUEST` (new) or `TASK` and `EPIC` (replan). With
+`PARALLEL: yes`, independent tasks run at once and you decide how many:
+read `<SKILL_DIR>/phases/parallel.md` before you design, and follow it.
 
 ## 1. Get context
 
 - Learn the repo: README/docs, layout, conventions, `git log --oneline -20`,
-  and the exact commands to build and run tests. If the project has no test
+  and the exact commands to build and run tests. Explore code through the
+  code graph (`search_graph`, `trace_path`, `get_code_snippet`) rather than
+  reading whole files. If the project has no test
   setup, the first task creates a minimal one (unless the request rules that
   out).
 - Look for related open work: `bd search "<keywords>"`. Build on it instead

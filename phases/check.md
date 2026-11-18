@@ -19,7 +19,9 @@ findings start from, and the commit with its diff.
 - A finding must be anchored to a line this commit added, changed or removed:
   `path:line`, with new-file line numbers (old ones for deletions).
 - Read anything else you need to understand the change: callers, callees,
-  tests, config, history. That is context, not review surface.
+  tests, config, history. That is context, not review surface. Find it
+  through the code graph (`trace_path`, `search_graph`, `get_code_snippet`)
+  rather than reading whole files.
 - Breakage the commit causes in untouched code **is** in scope, for example
   a signature changed without updating its callers. Anchor it to the changed
   line that causes it.

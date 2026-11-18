@@ -88,7 +88,7 @@ func cmdBrief(args []string) int {
 	default:
 		usageFail("brief")
 	}
-	d := needPending("DO", "FIX", "CHECK", "ACT", "REPLAN", "EPIC_CHECK", "EPIC_ACT")
+	d := needPending("DO", "FIX", "CHECK", "ACT", "REPLAN", "EPIC_CHECK", "EPIC_ACT", "MERGE")
 	head := fmt.Sprintf("DISPATCH %s %s epic=%s round=%d", d.Phase, d.ID, d.Epic, d.Round)
 	if d.Phase == "CHECK" || d.Phase == "ACT" {
 		head += " commit=" + short(d.Commit)
@@ -110,6 +110,8 @@ func cmdBrief(args []string) int {
 		briefEpicCheck(d)
 	case "EPIC_ACT":
 		briefEpicAct(d)
+	case "MERGE":
+		briefMerge(d)
 	}
 	return 0
 }

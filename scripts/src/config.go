@@ -44,8 +44,11 @@ func statePath(name string) string {
 	return filepath.Join(root, ".pdca", name)
 }
 
-func writeState(name, text string) {
-	p := statePath(name)
+func writeState(name, text string) { writeStateAt(repoRoot(), name, text) }
+
+// writeStateAt writes pdca state into the .pdca/ of the worktree at root.
+func writeStateAt(root, name, text string) {
+	p := filepath.Join(root, ".pdca", name)
 	if ign := filepath.Join(filepath.Dir(p), ".gitignore"); !fileExists(ign) {
 		writeFile(ign, "# pdca state, never committed\n*\n")
 	}
@@ -59,7 +62,7 @@ func fileExists(p string) bool {
 
 // Dispatch is the phase the orchestrator was told to run last.
 type Dispatch struct {
-	Phase    string `json:"phase"` // DO FIX CHECK ACT REPLAN EPIC_CHECK EPIC_ACT
+	Phase    string `json:"phase"` // DO FIX CHECK ACT REPLAN EPIC_CHECK EPIC_ACT BATCH MERGE
 	ID       string `json:"id"`    // task, or epic for epic phases
 	Epic     string `json:"epic,omitempty"`
 	Round    int    `json:"round"`
@@ -71,6 +74,12 @@ type Dispatch struct {
 	Full     bool   `json:"full,omitempty"`     // EPIC_CHECK that is the only code review (review: epic)
 	Recorded bool   `json:"recorded,omitempty"` // review / act file applied
 	LastFail string `json:"last_fail,omitempty"`
+	// parallel Do ("- parallel: yes"): the tasks of a BATCH or MERGE, in
+	// plan order, the commit each made in its worktree (MERGE), and the
+	// worktree of one Do of a batch
+	Batch    []string          `json:"batch,omitempty"`
+	Commits  map[string]string `json:"commits,omitempty"`
+	Worktree string            `json:"worktree,omitempty"`
 	// Steps are the writes this phase already made that a rerun must not
 	// repeat (follow-ups filed, comments posted), with what they produced.
 	Steps map[string]string `json:"steps,omitempty"`
@@ -136,16 +145,17 @@ func currentHarness() string {
 // nothing inherits the session model. Optional rows fall back to a base row.
 var (
 	roles         = []string{"plan", "do", "check", "act"}
-	optionalRoles = [][2]string{{"do_L", "do"}, {"check_L", "check"}, {"epic_check", "check"}, {"epic_act", "act"}}
+	optionalRoles = [][2]string{{"do_L", "do"}, {"check_L", "check"}, {"epic_check", "check"}, {"epic_act", "act"}, {"merge", "check"}}
 	claudeModels  = set("opus", "sonnet", "haiku", "fable") // what the Agent tool's model accepts
 	// what the Agent tool's effort and Codex's reasoning_effort accept
 	effortValues = map[string][]string{
 		"claude": {"low", "medium", "high", "xhigh", "max"},
 		"codex":  {"minimal", "low", "medium", "high", "xhigh", "max"},
 	}
-	sectionRE = regexp.MustCompile(`(?i)^#{1,6}\s*PDCA models:\s*(\w+)\s*$`)
-	rowRE     = regexp.MustCompile(`^\s*[-*]\s*(\w+)\s*[:=]\s*(\S+)\s+(\S+)\s*$`)
-	reviewRE  = regexp.MustCompile(`(?i)^\s*[-*]\s*review\s*[:=]\s*(\S+)\s*$`)
+	sectionRE  = regexp.MustCompile(`(?i)^#{1,6}\s*PDCA models:\s*(\w+)\s*$`)
+	rowRE      = regexp.MustCompile(`^\s*[-*]\s*(\w+)\s*[:=]\s*(\S+)\s+(\S+)\s*$`)
+	reviewRE   = regexp.MustCompile(`(?i)^\s*[-*]\s*review\s*[:=]\s*(\S+)\s*$`)
+	parallelRE = regexp.MustCompile(`(?i)^\s*[-*]\s*parallel\s*[:=]\s*(\S+)\s*$`)
 )
 
 type ModelSpec struct{ Model, Effort string }
@@ -153,9 +163,25 @@ type ModelSpec struct{ Model, Effort string }
 type Models map[string]ModelSpec
 
 type rows struct {
-	order  []string
-	m      map[string]ModelSpec
-	review string // "- review: epic|task"; empty means epic
+	order    []string
+	m        map[string]ModelSpec
+	review   string // "- review: epic|task"; empty means epic
+	parallel string // "- parallel: yes|no"; empty means no
+}
+
+// Mode is how an epic runs: its review mode, and whether independent tasks
+// run at once (the planner decides how many by how it splits the work).
+type Mode struct {
+	Review   string
+	Parallel bool
+}
+
+func (m Mode) String() string {
+	s := "review=" + m.Review
+	if m.Parallel {
+		s += " parallel=yes"
+	}
+	return s
 }
 
 func (r *rows) put(role string, s ModelSpec) {
@@ -183,6 +209,8 @@ func sectionRows(text, harness string) *rows {
 		} else if inside {
 			if m := reviewRE.FindStringSubmatch(line); m != nil {
 				r.review = strings.ToLower(m[1])
+			} else if m := parallelRE.FindStringSubmatch(line); m != nil {
+				r.parallel = strings.ToLower(m[1])
 			} else if m := rowRE.FindStringSubmatch(line); m != nil {
 				r.put(m[1], ModelSpec{m[2], m[3]})
 			}
@@ -226,6 +254,9 @@ func validateModels(r *rows, harness, src string) Models {
 	}
 	if r.review != "" && r.review != "epic" && r.review != "task" {
 		problems = append(problems, fmt.Sprintf("review %q (epic or task)", r.review))
+	}
+	if r.parallel != "" && r.parallel != "yes" && r.parallel != "no" {
+		problems = append(problems, fmt.Sprintf("parallel %q (yes or no; the planner decides how many tasks run at once)", r.parallel))
 	}
 	if len(problems) > 0 {
 		fail("models %s: %s", src, strings.Join(problems, "; "))
@@ -292,14 +323,15 @@ func loadModels(harness string) (string, Models) {
 	return src, m
 }
 
-// loadConfig returns the models and the review mode (epic unless the
-// section says "- review: task").
-func loadConfig(harness string) (string, Models, string) {
-	mode := func(r *rows) string {
-		if r.review == "" {
-			return "epic"
+// loadConfig returns the models and the mode: review epic unless the section
+// says "- review: task", one Do at a time unless it says "- parallel: yes".
+func loadConfig(harness string) (string, Models, Mode) {
+	mode := func(r *rows) Mode {
+		m := Mode{Review: r.review, Parallel: r.parallel == "yes"}
+		if m.Review == "" {
+			m.Review = "epic"
 		}
-		return r.review
+		return m
 	}
 	if p, r := modelsSectionFile(harness); p != "" {
 		return p, validateModels(r, harness, p), mode(r)
@@ -312,15 +344,17 @@ func loadConfig(harness string) (string, Models, string) {
 	fail("no-models: no '## PDCA models: %s' section in AGENTS.md and no saved answer; "+
 		"ask the user for the model and effort of plan, do, check and act, then run: "+
 		"%s models --harness %s --set \"plan=<model>/<effort> do=... check=... act=...\"", harness, scriptPath(), harness)
-	return "", nil, ""
+	return "", nil, Mode{}
 }
 
-func modelsLine(m Models, review string) string {
+func modelsLine(m Models, mode Mode) string {
 	var parts []string
 	for _, role := range allRoleNames() {
-		parts = append(parts, fmt.Sprintf("%s=%s/%s", role, m[role].Model, m[role].Effort))
+		if role != "merge" || mode.Parallel {
+			parts = append(parts, fmt.Sprintf("%s=%s/%s", role, m[role].Model, m[role].Effort))
+		}
 	}
-	return "MODELS " + strings.Join(parts, " ") + " review=" + review
+	return "MODELS " + strings.Join(parts, " ") + " " + mode.String()
 }
 
 // ---------------------------------------------------------------- agents
@@ -328,11 +362,15 @@ func modelsLine(m Models, review string) string {
 // Phase agents: the phase file is the agent's whole instruction set, so a
 // dispatch prompt carries only IDs. Claude Code tools are kept to what the
 // phase needs, because every tool schema is re-read on every request.
+// the codebase-memory code graph, for the phases that explore code
+const graphTools = ", mcp__codebase-memory-mcp__search_graph, mcp__codebase-memory-mcp__trace_path, mcp__codebase-memory-mcp__get_code_snippet"
+
 var agentSpecs = []struct{ phase, file, tools string }{
-	{"plan", "plan.md", "Bash, Read, Grep, Glob"},
+	{"plan", "plan.md", "Bash, Read, Grep, Glob" + graphTools},
 	{"do", "do.md", "Bash, Read, Edit, Write, Grep, Glob"},
-	{"check", "check.md", "Bash, Read, Grep, Glob"},
+	{"check", "check.md", "Bash, Read, Grep, Glob" + graphTools},
 	{"act", "act.md", "Bash, Read, Grep, Glob"},
+	{"merge", "merge.md", "Bash, Read, Edit, Write, Grep, Glob"}, // only after a parallel batch
 }
 
 func agentBody(file string) string {
@@ -340,6 +378,7 @@ func agentBody(file string) string {
 	if !ok {
 		fail("missing phase file phases/%s", file)
 	}
+	text = strings.ReplaceAll(text, "<SKILL_DIR>", skillDir())
 	return fmt.Sprintf("`pdca` below means `%s`.\n\n%s", scriptPath(), text)
 }
 

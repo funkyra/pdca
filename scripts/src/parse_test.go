@@ -180,3 +180,22 @@ func TestStatusPaths(t *testing.T) {
 		t.Fatalf("statusPaths: %q", got)
 	}
 }
+
+func TestParallelRow(t *testing.T) {
+	r := sectionRows("## PDCA models: claude\n- plan: opus high\n- do: sonnet low\n- check: opus high\n- act: haiku low\n- parallel: Yes\n", "claude")
+	if m := validateModels(r, "claude", "test"); r.parallel != "yes" || m["merge"] != (ModelSpec{"opus", "high"}) {
+		t.Fatalf("parallel %q, merge %v", r.parallel, m["merge"])
+	}
+	for _, bad := range []string{"3", "many"} {
+		r.parallel = bad
+		if _, f := tryValidate(r, "claude"); !strings.Contains(f, `parallel "`+bad+`" (yes or no; the planner decides`) {
+			t.Errorf("parallel %s accepted: %q", bad, f)
+		}
+	}
+	p := filepath.Join(t.TempDir(), "AGENTS.md")
+	writeFile(p, "## PDCA models: claude\n- plan: opus high\n- parallel: no\n")
+	writeModelsSection(p, "claude", parseModelSpec("plan=opus/low do=sonnet/medium check=opus/high act=haiku/low parallel=YES"))
+	if text, _ := readFile(p); strings.Count(text, "parallel") != 1 || !strings.Contains(text, "- act: haiku low\n- parallel: yes\n") {
+		t.Fatalf("got:\n%s", text)
+	}
+}

@@ -44,7 +44,7 @@ func cmdPreflight(args []string) int {
 	if p := agentsProblem(harness); p != "" {
 		fail("%s", p)
 	}
-	_, models, review := loadConfig(harness)
+	_, models, mode := loadConfig(harness)
 	writeState("harness", harness+"\n")
 	branch := currentBranch()
 	protected := map[string]bool{}
@@ -73,7 +73,7 @@ func cmdPreflight(args []string) int {
 		}
 		say(fmt.Sprintf("WARN on-protected-branch: '%s'; rerun with --branch pdca/<slug> before planning", name))
 	}
-	say(fmt.Sprintf("OK root=%s branch=%s base=%s", root, branch, base), modelsLine(models, review))
+	say(fmt.Sprintf("OK root=%s branch=%s base=%s", root, branch, base), modelsLine(models, mode))
 	var epics []Issue
 	bdJSON(&epics, "list", "-t", "epic", "--status", "open")
 	for i := range epics {
@@ -249,9 +249,7 @@ func cmdOnce(args []string) int {
 		fail("no-commits: make a first commit, then rerun")
 	}
 	if rc, _, _ := run("bd", "where"); rc != 0 {
-		if rc, o, e := runIn(repoRoot(), "bd", "init", "--non-interactive"); rc != 0 {
-			fail("bd init: %s", firstLine(e, o))
-		}
+		bdInit(repoRoot(), false)
 		say("OK beads initialized (bd init): the plan and the state of the run live there")
 	}
 	name, argv, env := onceCommand(harness, strings.Join(pos, " "), extra)
@@ -282,8 +280,12 @@ func parseModelSpec(spec string) *rows {
 	r := &rows{m: map[string]ModelSpec{}}
 	for _, item := range strings.Fields(spec) {
 		role, val, _ := strings.Cut(item, "=")
-		if role == "review" {
+		switch role {
+		case "review":
 			r.review = strings.ToLower(val)
+			continue
+		case "parallel":
+			r.parallel = strings.ToLower(val)
 			continue
 		}
 		i := strings.LastIndex(val, "/")
@@ -295,6 +297,16 @@ func parseModelSpec(spec string) *rows {
 	return r
 }
 
+// writeModeRows writes the review and parallel rows the user gave.
+func writeModeRows(b *strings.Builder, r *rows) {
+	if r.review != "" {
+		fmt.Fprintf(b, "- review: %s\n", r.review)
+	}
+	if r.parallel != "" {
+		fmt.Fprintf(b, "- parallel: %s\n", r.parallel)
+	}
+}
+
 // writeModelsSection puts the '## PDCA models: <harness>' section into an
 // AGENTS.md file, replacing the old one in place or appending it.
 func writeModelsSection(path, harness string, r *rows) {
@@ -303,9 +315,7 @@ func writeModelsSection(path, harness string, r *rows) {
 	for _, role := range r.order {
 		fmt.Fprintf(&b, "- %s: %s %s\n", role, r.m[role].Model, r.m[role].Effort)
 	}
-	if r.review != "" {
-		fmt.Fprintf(&b, "- review: %s\n", r.review)
-	}
+	writeModeRows(&b, r)
 	block := strings.TrimRight(b.String(), "\n")
 	text, _ := readFile(path)
 	var lines, kept []string
@@ -334,7 +344,7 @@ func writeModelsSection(path, harness string, r *rows) {
 		}
 		if inside {
 			if !strings.HasPrefix(strings.TrimSpace(line), "#") {
-				if !rowRE.MatchString(line) && !reviewRE.MatchString(line) {
+				if !rowRE.MatchString(line) && !reviewRE.MatchString(line) && !parallelRE.MatchString(line) {
 					kept = append(kept, line)
 				}
 				continue
@@ -354,6 +364,33 @@ func writeModelsSection(path, harness string, r *rows) {
 		res += block
 	}
 	writeFile(path, res+"\n")
+}
+
+// bdInit makes the beads workspace in root. bd init's own agent setup also
+// writes Cursor rules and CLAUDE.md, so it is skipped. With agents, only
+// the Codex recipe (AGENTS.md, .agents/skills/beads, .codex hooks; agy reads
+// the first two too) and the Claude Code SessionStart hook are added. The
+// claude recipe also writes CLAUDE.md, which is put back as it was: Claude
+// Code reads AGENTS.md.
+func bdInit(root string, agents bool) {
+	if rc, o, e := runIn(root, "bd", "init", "--non-interactive", "--skip-agents"); rc != 0 {
+		fail("bd init: %s", firstLine(e, o))
+	}
+	if !agents {
+		return
+	}
+	claudeMd := filepath.Join(root, "CLAUDE.md")
+	before, had := readFile(claudeMd)
+	for _, recipe := range []string{"codex", "claude"} {
+		if rc, o, e := runIn(root, "bd", "setup", recipe); rc != 0 {
+			fail("bd setup %s: %s", recipe, firstLine(e, o))
+		}
+	}
+	if had {
+		writeIfChanged(claudeMd, before)
+	} else {
+		os.Remove(claudeMd)
+	}
 }
 
 // cmdInit sets up the current project for pdca: this machine's install,
@@ -405,10 +442,8 @@ func cmdInit(args []string) int {
 	if rc, _, _ := run("bd", "where"); rc == 0 {
 		say("OK beads already set up")
 	} else {
-		if rc, o, e := runIn(root, "bd", "init", "--non-interactive"); rc != 0 {
-			fail("bd init: %s", firstLine(e, o))
-		}
-		say("OK beads initialized (bd init)")
+		bdInit(root, true)
+		say("OK beads initialized (bd init) with its Codex and Claude Code setup")
 	}
 	missing, wroteAgentsMd := false, false
 	if spec := flags["--models"]; spec != "" {
@@ -420,11 +455,11 @@ func cmdInit(args []string) int {
 		p := filepath.Join(root, "AGENTS.md")
 		writeModelsSection(p, harness, r)
 		wroteAgentsMd = true
-		_, m, review := loadConfig(harness)
-		say("OK models written to "+p, modelsLine(m, review))
+		_, m, mode := loadConfig(harness)
+		say("OK models written to "+p, modelsLine(m, mode))
 	} else if p, _ := modelsSectionFile(harness); p != "" {
-		_, m, review := loadConfig(harness)
-		say("OK models from "+p, modelsLine(m, review))
+		_, m, mode := loadConfig(harness)
+		say("OK models from "+p, modelsLine(m, mode))
 	} else {
 		missing = true
 	}
@@ -474,13 +509,11 @@ func cmdModels(args []string) int {
 		for _, role := range r.order {
 			fmt.Fprintf(&b, "- %s: %s %s\n", role, r.m[role].Model, r.m[role].Effort)
 		}
-		if r.review != "" {
-			fmt.Fprintf(&b, "- review: %s\n", r.review)
-		}
+		writeModeRows(&b, r)
 		writeState("models-"+harness, b.String())
 	}
-	src, models, review := loadConfig(harness)
-	say(fmt.Sprintf("OK harness=%s source=%s", harness, src), modelsLine(models, review))
+	src, models, mode := loadConfig(harness)
+	say(fmt.Sprintf("OK harness=%s source=%s", harness, src), modelsLine(models, mode))
 	return 0
 }
 

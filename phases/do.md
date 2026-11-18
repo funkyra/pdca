@@ -19,7 +19,9 @@ Inputs from the dispatch: `TASK`, `EPIC`, `MODE` (initial | fix), `ROUND`,
   already committed on top of BASE, build on that commit and end with exactly
   one commit on top of BASE. If HEAD moved for any other reason, stop: run
   `pdca done --blocked "HEAD moved off BASE"`.
-- Read the code you'll touch and its neighbors, and follow existing patterns.
+- Read the files you'll change and the code they call or are called by, and
+  follow existing patterns. Take anything else in pieces (`grep -n`,
+  `sed -n` ranges) rather than whole files.
 
 ## 2. Implement
 

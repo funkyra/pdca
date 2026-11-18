@@ -8,32 +8,16 @@ disable-model-invocation: true
 # PDCA development cycle
 
 The task is the text after `/pdca` (Claude Code) or `$pdca` (Codex). It goes
-Plan → Do → Check → Act. Beads
-holds the plan and all state; git commits are the only way code moves
-between phases. Each phase runs in a fresh agent that reads what it needs
-with `pdca brief` and finishes with a `pdca` command, which verifies what the
-phase left behind, records it in beads and prints the next dispatch.
-
-| Phase | Agent | Leaves behind |
-|---|---|---|
-| Plan | `pdca-plan`, one per epic | epic (design, autonomous decisions) + child tasks |
-| Do | `pdca-do`, one per task and fix round | exactly one commit with a `Bead: <id>` trailer |
-| Check | `pdca-check`, one for the epic (`review: epic`, the default) or one per commit (`review: task`) | review comment; on PASS follow-ups, the closed task or epic |
-| Act | `pdca-act`, one per FAIL | close / fix brief / replan / follow-ups |
+Plan → Do → Check → Act, each phase in a fresh agent. Beads holds the plan
+and all state; git commits are the only way code moves between phases. Each
+agent ends with a `pdca` command that verifies its phase, records it in beads
+and prints the next dispatch.
 
 `pdca` below means `<SKILL_DIR>/scripts/pdca`, where SKILL_DIR is the base
 directory shown when this skill loaded. Run it with its full path.
 
-## `init`
-
-When the task is `init`, set the project up instead of running the cycle. Run
-`pdca init --harness <claude|codex>`, adding `--models "plan=<m>/<e>
-do=<m>/<e> check=<m>/<e> act=<m>/<e>"` and `--review epic|task` if the user
-gave them. On `FAIL no-models`, ask the user for the model and effort of
-plan, do, check and act, and for the review mode (`epic`: one review of the
-whole epic, the default; `task`: one review per commit), then run it again
-with their answers. Relay what it printed, including the files it asks to
-commit and the new session it asks for, and stop.
+When the task is `init`, follow `<SKILL_DIR>/phases/setup.md` instead of the
+cycle.
 
 ## Step 0: Preflight
 
@@ -52,10 +36,8 @@ word:
   here (`pdca init` to keep using it, `pdca once` for a single run).
 - `FAIL agents-stale` → run the `install` command it prints, tell the user
   to start a new session so the updated agents load, and stop.
-- `FAIL no-models` → ask the user for a model and reasoning effort for each
-  phase agent (plan, do, check, act), or to write them into AGENTS.md (see
-  "Models"). Save an answer with the `models --set` command it prints, then
-  rerun preflight.
+- `FAIL no-models` → follow `<SKILL_DIR>/phases/setup.md`, then rerun
+  preflight.
 - Any other `FAIL` → stop and tell the user.
 - `WARN on-protected-branch` (no `--branch` given) → for a new run, rerun
   with it; for `resume`, go on.
@@ -90,6 +72,7 @@ for again and again:
 ## Step 1: Run the agents
 
 Run one agent at a time and wait for it: the repo has a single working tree.
+Only a `BATCH` runs several at once: do what its line says.
 
 | | Claude Code | Codex |
 |---|---|---|
@@ -104,6 +87,9 @@ REPO: <root>   BRANCH: <branch>   BASE: <base sha>
 REQUEST (verbatim from the user):
 <the task text>
 ```
+
+When the `MODELS` line has `parallel=yes`, add the line `PARALLEL: yes`
+after the `REPO` line.
 
 Every agent replies with what `pdca` printed. Act on it:
 
@@ -120,35 +106,6 @@ Every agent replies with what `pdca` printed. Act on it:
 <reason>` means that phase didn't finish: dispatch it again as printed. If
 the same phase gets `RETRY` twice in a row, stop and report the reason to the
 user.
-
-### Models
-
-Every phase agent runs with the model and effort the user chose; nothing
-inherits the session model. `pdca` reads them from the nearest AGENTS.md that
-has a section for the harness (the repo root, its parent directories, then
-`~/.codex/AGENTS.md`), otherwise from the answer saved by `pdca models --set`
-in the repo's `.pdca/` (which git ignores). `pdca init --models` writes the
-section into the project's AGENTS.md:
-
-```markdown
-## PDCA models: claude
-- plan: opus high
-- do: sonnet medium
-- check: sonnet high
-- act: haiku medium
-```
-
-`## PDCA models: codex` holds the Codex models. plan, do, check and act are
-required. The optional rows `do_L` and `check_L` (tasks planned as size L),
-`epic_check` and `epic_act` default to their base row. The user owns these
-choices: they edit the section, or you save their answer with
-`pdca models --set`.
-
-The optional row `- review: epic|task` picks how Check runs. `epic` (the
-default): tasks are only committed, and one Check reviews the whole diff of
-the epic at the end; fixes come back as new tasks. `task`: every commit gets
-its own Check and, after a FAIL, its own Act; the Check of the last task also
-checks the assembled epic.
 
 ## Step 2: Finish
 

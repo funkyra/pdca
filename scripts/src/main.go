@@ -15,7 +15,7 @@ import (
 )
 
 const usageText = `pdca: state, checks and dispatch for the PDCA skill.
-The first word of the output is the outcome: OK FAIL WARN NEXT RETRY COMPLETE STUCK ESCALATE EPIC NONE.
+The first word of the output is the outcome: OK FAIL WARN NEXT BATCH RETRY COMPLETE STUCK ESCALATE EPIC NONE.
 
 Orchestrator:
   preflight --harness claude|codex [--branch NAME]  repo, beads, clean tree, agents, models; switch branch
@@ -25,7 +25,7 @@ Orchestrator:
                                set up this project to keep using pdca: beads, the models section, the agents
   once [--harness H] TASK [-- HARNESS ARGS]
                                a single run in a project not set up for pdca: starts the harness with the agents
-  models [--harness H] [--set "plan=M/E do=M/E check=M/E act=M/E [review=epic|task]"]
+  models [--harness H] [--set "plan=M/E do=M/E check=M/E act=M/E [review=epic|task] [parallel=yes|no]"]
   next [ID]                    verify the pending phase, then print the next dispatch
   answer ID TEXT               record the user's answer to an ESCALATE, print the next dispatch
   current                      open PDCA epic bound to the current branch
@@ -36,6 +36,7 @@ Phase agents:
   brief [ID]                   what the current phase reads: task, design, reviews, diff
   plan-apply [--replan] FILE   create the epic and tasks from a plan file
   done [--note TEXT | --blocked TEXT]   Do: verify the commit or record a blocker
+  worktree TASK                Do of a parallel batch: make the task's worktree at BASE
   review FILE                  Check: record the review; PASS files follow-ups and closes
   act FILE                     Act: record the decision
 `
@@ -71,7 +72,7 @@ var cmdUsage = map[string]string{
 	"install":    "install [--project]",
 	"init":       `init [--harness claude|codex] [--models "plan=M/E do=M/E check=M/E act=M/E"] [--review epic|task]`,
 	"once":       "once [--harness claude|codex] TASK [-- HARNESS ARGS]",
-	"models":     `models [--harness claude|codex] [--set "plan=M/E do=M/E check=M/E act=M/E [review=epic|task]"]`,
+	"models":     `models [--harness claude|codex] [--set "plan=M/E do=M/E check=M/E act=M/E [review=epic|task] [parallel=yes|no]"]`,
 	"next":       "next [ID]",
 	"answer":     "answer ID TEXT",
 	"current":    "current",
@@ -80,6 +81,7 @@ var cmdUsage = map[string]string{
 	"brief":      "brief [ID]",
 	"plan-apply": "plan-apply [--replan] FILE",
 	"done":       "done [--note TEXT | --blocked TEXT]",
+	"worktree":   "worktree TASK",
 	"review":     "review FILE",
 	"act":        "act FILE",
 }
@@ -101,6 +103,7 @@ func init() {
 		"done":       cmdDone,
 		"review":     cmdReview,
 		"act":        cmdAct,
+		"worktree":   cmdWorktree,
 	}
 }
 

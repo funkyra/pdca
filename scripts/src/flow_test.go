@@ -113,7 +113,7 @@ func field(s, re string) string {
 func TestAgentsFlow(t *testing.T) {
 	e := newEnv(t, "- review: task\n")
 	e.run(1, []string{"preflight", "--harness", "claude"}, `FAIL no-agents: this project isn't set up for pdca.*init.*pdca once`)
-	e.run(0, []string{"install", "--project"}, `OK installed 4 pdca-\* agent file\(s\) in `+regexp.QuoteMeta(e.repo)+`/\.claude/agents`)
+	e.run(0, []string{"install", "--project"}, `OK installed 5 pdca-\* agent file\(s\) in `+regexp.QuoteMeta(e.repo)+`/\.claude/agents`)
 	if st := e.sh("git status --porcelain"); st != "" {
 		t.Fatalf("project agents dirty the tree: %q", st)
 	}
@@ -369,15 +369,26 @@ func TestInstallInit(t *testing.T) {
 	// an older install left Claude Code agents user-level: they are removed, the project gets its own
 	legacy := filepath.Join(top, "claude", "agents", "pdca-do.md")
 	writeFile(legacy, "---\nname: pdca-do\ndescription: old\n---\nold\n")
-	o := e.run(1, []string{"init"}, `OK installed 4 pdca-\* agent file\(s\) in .*/codex/agents`,
+	o := e.run(1, []string{"init"}, `OK installed 5 pdca-\* agent file\(s\) in .*/codex/agents`,
 		`OK removed .*/claude/agents/pdca-do.md`, `OK installed .*/\.local/bin/pdca -> `,
-		`OK installed 4 pdca-\* agent file\(s\) in `+regexp.QuoteMeta(e.repo)+`/\.claude/agents`,
+		`OK installed 5 pdca-\* agent file\(s\) in `+regexp.QuoteMeta(e.repo)+`/\.claude/agents`,
 		`OK beads initialized`, `FAIL no-models: ask the user`)
-	if fileExists(legacy) || strings.Contains(e.sh("git status --porcelain"), ".claude") {
-		t.Fatalf("legacy agent kept, or project agents not ignored:\n%s", e.sh("git status --porcelain"))
+	if st := e.sh("git status --porcelain --untracked-files=all"); fileExists(legacy) || strings.Contains(st, ".claude/agents") {
+		t.Fatalf("legacy agent kept, or project agents not ignored:\n%s", st)
 	}
 	if strings.Contains(o, "notes.txt") {
 		t.Fatalf("init asks to commit the user's own file:\n%s", o)
+	}
+	// beads is set up for Codex and Claude Code only, and Claude Code reads AGENTS.md
+	for _, p := range []string{"AGENTS.md", ".agents/skills/beads/SKILL.md", ".codex/hooks.json", ".claude/settings.json"} {
+		if !fileExists(filepath.Join(e.repo, p)) {
+			t.Fatalf("init didn't set up %s", p)
+		}
+	}
+	for _, p := range []string{"CLAUDE.md", ".cursor"} {
+		if fileExists(filepath.Join(e.repo, p)) {
+			t.Fatalf("init wrote %s", p)
+		}
 	}
 	if !strings.Contains(o, top+"/.agents/skills/pdca -> ") {
 		t.Fatalf("no Codex skill link:\n%s", o)
@@ -415,8 +426,8 @@ func TestOnce(t *testing.T) {
 		argv[3] != "--model" || argv[5] != "/pdca add a flag" || !slices.Contains(env, "PDCA_AGENTS=session") {
 		t.Fatalf("claude command: %s %q", name, argv)
 	}
-	if len(agents) != 4 || !strings.Contains(agents["pdca-do"].Prompt, "# DO phase") ||
-		strings.Join(agents["pdca-plan"].Tools, ",") != "Bash,Read,Grep,Glob" {
+	if len(agents) != 5 || !strings.Contains(agents["pdca-do"].Prompt, "# DO phase") ||
+		!slices.Contains(agents["pdca-plan"].Tools, "mcp__codebase-memory-mcp__search_graph") {
 		t.Fatalf("session agents: %+v", agents)
 	}
 	// preflight trusts the session agents, and nothing was written into the project
@@ -446,5 +457,143 @@ func TestPlanRollback(t *testing.T) {
 	e.run(1, []string{"plan-apply", plan}, `FAIL bd create: boom; deleted the beads this call had created \(\S+, \S+\.1\)`)
 	if s := e.sh("bd list --json"); strings.Contains(s, `"id"`) {
 		t.Fatalf("rollback left beads: %s", s)
+	}
+}
+
+// commitIn makes a commit in dir (a worktree) with a message from a file.
+func (e *env) commitIn(dir, file, line, msg string) string {
+	e.t.Helper()
+	m := e.file("msg.txt", msg)
+	return e.sh("cd " + dir + " && mkdir -p \"$(dirname " + file + ")\" && printf '" + line + "\\n' >> " + file +
+		" && git add " + file + " && git commit -qF " + m + " && git rev-parse --short HEAD")
+}
+
+// Without a parallel row, independent tasks still run one at a time, the
+// planner isn't pointed at the parallel instruction and no worktree is made.
+func TestParallelOff(t *testing.T) {
+	e := newEnv(t, "")
+	e.run(0, []string{"install", "--project"}, `OK installed 5 pdca-\* agent file`)
+	o := e.run(0, []string{"preflight", "--harness", "claude", "--branch", "pdca/s"}, `MODELS .* review=epic\n`)
+	if strings.Contains(o, "parallel") || strings.Contains(o, "merge=") {
+		t.Fatalf("parallel shows without the row:\n%s", o)
+	}
+	plan := e.file("plan.md", "# Epic: E\nreq\n## Design\nd\n## Acceptance\n- ok\n"+
+		"# Task: A\nSize: S\nga\n## Acceptance\n- a\n# Task: B\nSize: S\ngb\n## Acceptance\n- b\n")
+	o = e.run(0, []string{"plan-apply", plan}, `OK plan .* review=epic\n`, `NEXT DO \S+\.1\n`)
+	if strings.Contains(o, "BATCH") || strings.Contains(o, "WORKTREE") || strings.Contains(o, ".2\n") {
+		t.Fatalf("independent tasks went out together without the parallel row:\n%s", o)
+	}
+	e.run(1, []string{"worktree", field(o, `NEXT DO (\S+)`)}, `FAIL the pending phase is DO \S+, not BATCH`)
+	// the plan agent only points at the instruction; its text stays out of every agent
+	planAgent, _ := readFile(filepath.Join(e.repo, ".claude", "agents", "pdca-plan.md"))
+	if !strings.Contains(planAgent, skillDir()+"/phases/parallel.md") || strings.Contains(planAgent, "Foundation first") {
+		t.Fatalf("plan agent:\n%s", planAgent)
+	}
+	parallel, _ := readFile(filepath.Join(skillDir(), "phases", "parallel.md"))
+	for _, a := range agentSpecs {
+		if body := agentBody(a.file); strings.Contains(body, strings.Split(parallel, "\n")[2]) {
+			t.Errorf("pdca-%s carries the parallel instruction", a.phase)
+		}
+	}
+}
+
+// With "- parallel: yes" ready tasks go out as a batch, each Do in its own
+// worktree; the merge puts their commits onto the branch, and a task it
+// leaves out goes back to an ordinary Do.
+func TestParallel(t *testing.T) {
+	e := newEnv(t, "- parallel: yes\n")
+	e.run(0, []string{"install", "--project"}, `OK installed 5 pdca-\* agent file`)
+	e.run(0, []string{"preflight", "--harness", "claude", "--branch", "pdca/p"}, `MODELS .* merge=opus/high review=epic parallel=yes\n`)
+	base := e.sh("git rev-parse HEAD")
+	plan := e.file("plan.md", "# Epic: Feature\nreq\n## Design\nd\n## Acceptance\n- works\n"+
+		"# Task: A\nSize: S\nga\n## Acceptance\n- a ok\n"+
+		"# Task: B\nSize: L\ngb\n## Acceptance\n- b ok\n"+
+		"# Task: C\nSize: S\nDeps: 1, 2\ngc\n## Acceptance\n- c ok\n")
+	o := e.run(0, []string{"plan-apply", plan}, `OK plan .* review=epic parallel=yes\n`, `BATCH 2: start these 2 agents at once`,
+		`NEXT DO \S+\.1\nAGENT pdca-do model=sonnet effort=medium\nPROMPT TASK: \S+\.1 EPIC: \S+ ROUND: 0 BASE: [0-9a-f]{7} MODE: initial WORKTREE: \S+/\.pdca/wt/\S+\.1 — other Do agents work beside you: run `+"`"+`pdca worktree \S+\.1`+"`"+` first`,
+		`NEXT DO \S+\.2\nAGENT pdca-do model=opus effort=medium\n`)
+	epic := field(o, `epic=(\S+)`)
+	t1, t2, t3 := epic+".1", epic+".2", epic+".3"
+	if strings.Contains(o, "NEXT DO "+t3) {
+		t.Fatalf("C depends on A and B but went out with them:\n%s", o)
+	}
+	wt1, wt2 := filepath.Join(e.repo, ".pdca", "wt", t1), filepath.Join(e.repo, ".pdca", "wt", t2)
+
+	// A works in its worktree; the main tree doesn't move
+	e.run(0, []string{"worktree", t1}, `OK worktree `+regexp.QuoteMeta(wt1)+` at BASE`)
+	os.Chdir(wt1)
+	e.run(0, []string{"brief"}, `DISPATCH DO `+t1, `HEAD is BASE`)
+	e.commitIn(wt1, "app.py", "a = 1", "feat: a\n\nBead: "+t1+"\n")
+	e.run(0, []string{"done", "--note", "tests ok"}, `OK do `+t1+` .*\(worktree\)`, `WAIT the orchestrator runs`)
+	os.Chdir(e.repo)
+	if h := e.sh("git rev-parse HEAD"); h != base || e.sh("git status --porcelain") != "" {
+		t.Fatalf("the main tree changed during the batch: %s\n%s", h, e.sh("git status --porcelain"))
+	}
+	// B hasn't reported: only B goes out again
+	o = e.run(0, []string{"next"}, `RETRY BATCH `+epic+`: no verified commit from `+t2, `BATCH 1:`, `NEXT DO `+t2+`\n`)
+	if strings.Contains(o, "NEXT DO "+t1) {
+		t.Fatalf("the retry dispatched A again:\n%s", o)
+	}
+	e.run(0, []string{"worktree", t2}, `OK worktree`)
+	e.commitIn(wt2, "sub/b.py", "b = 2", "feat: b\n\nBead: "+t2+"\n")
+	os.Chdir(wt2)
+	e.run(0, []string{"done"}, `OK do `+t2+` .*\(worktree\)`, `WAIT`)
+	os.Chdir(e.repo)
+
+	// both reported: the worktrees go (a ref keeps each commit) and the merge comes next
+	o = e.run(0, []string{"next"}, `OK batch `+t1+`=[0-9a-f]{7} `+t2+`=[0-9a-f]{7}`, `NEXT MERGE `+epic+`\n`,
+		`AGENT pdca-merge model=opus effort=high\n`, `PROMPT MERGE EPIC: `+epic+` BASE: [0-9a-f]{7} TASKS: \S+\.1=[0-9a-f]{7} \S+\.2=[0-9a-f]{7}\n`)
+	c1 := field(o, regexp.QuoteMeta(t1)+`=([0-9a-f]{7})`)
+	if fileExists(wt1) || fileExists(wt2) || !strings.Contains(e.sh("git for-each-ref refs/pdca"), "refs/pdca/"+t2) {
+		t.Fatalf("after the batch: worktrees %v %v, refs %q", fileExists(wt1), fileExists(wt2), e.sh("git for-each-ref refs/pdca"))
+	}
+	e.run(0, []string{"brief"}, `DISPATCH MERGE `+epic, `the batch, in plan order`, `--- `+t1+` A commit=`, `app.py`)
+
+	// the merge: a commit of no task is refused
+	e.sh("git cherry-pick " + c1 + " >/dev/null && printf 'z\\n' > z.py && git add z.py && git commit -qm stray")
+	e.run(1, []string{"done"}, `FAIL merge `+epic+`: commit [0-9a-f]{7} is neither`)
+	// A merged, B left out, one cleanup commit
+	e.sh("git reset -q --hard HEAD~1")
+	e.commitIn(e.repo, "app.py", "a = 11", "refactor: unify\n\nBead: "+epic+"\nPDCA: merge\n")
+	o = e.run(0, []string{"done", "--note", "tests ok; left B out\n- Decision: kept A's helper — fuller — low"},
+		`OK merge `+epic+` `+t1+`=[0-9a-f]{7} cleanup=[0-9a-f]{7} redo=`+t2, `NEXT DO `+t2+`\n`)
+	if strings.Contains(o, "WORKTREE") || strings.Contains(o, "BATCH") || e.sh("git for-each-ref refs/pdca") != "" {
+		t.Fatalf("B should come back as an ordinary Do, refs gone:\n%s\nrefs: %s", o, e.sh("git for-each-ref refs/pdca"))
+	}
+	e.run(0, []string{"status", epic}, regexp.QuoteMeta(t1)+` +closed`)
+
+	// B in the main tree, then C alone
+	e.sh("mkdir -p sub")
+	e.commit("sub/b.py", "b = 2", "feat: b\n\nBead: "+t2)
+	e.run(0, []string{"done"}, `closed \(review: epic\)`, `NEXT DO `+t3+`\n`)
+	e.commit("app.py", "c = 3", "feat: c\n\nBead: "+t3)
+	e.run(0, []string{"done"}, `NEXT EPIC_CHECK `+epic, `REVIEW: full`)
+	e.run(0, []string{"report", epic}, `commits=4`, `- Decision: kept A's helper`)
+}
+
+// A batch with one commit and one blocker: pdca fast-forwards the commit
+// itself, and the blocked task goes to replanning.
+func TestParallelFastForward(t *testing.T) {
+	e := newEnv(t, "- parallel: yes\n- review: task\n")
+	e.run(0, []string{"install", "--project"}, `OK`)
+	e.run(0, []string{"preflight", "--harness", "claude", "--branch", "pdca/f"}, `parallel=yes`)
+	plan := e.file("plan.md", "# Epic: E\nreq\n## Design\nd\n## Acceptance\n- ok\n"+
+		"# Task: A\nSize: S\nga\n## Acceptance\n- a\n# Task: B\nSize: S\ngb\n## Acceptance\n- b\n")
+	o := e.run(0, []string{"plan-apply", plan}, `BATCH 2:`)
+	epic := field(o, `epic=(\S+)`)
+	t1, t2 := epic+".1", epic+".2"
+	wt1, wt2 := filepath.Join(e.repo, ".pdca", "wt", t1), filepath.Join(e.repo, ".pdca", "wt", t2)
+	e.run(0, []string{"worktree", t1}, `OK`)
+	e.run(0, []string{"worktree", t2}, `OK`)
+	c1 := e.commitIn(wt1, "app.py", "a = 1", "feat: a\n\nBead: "+t1+"\n")
+	os.Chdir(wt1)
+	e.run(0, []string{"done"}, `WAIT`)
+	os.Chdir(wt2)
+	e.run(0, []string{"done", "--blocked", "B contradicts the design"}, `OK do `+t2+` BLOCKED`, `WAIT`)
+	os.Chdir(e.repo)
+	e.run(0, []string{"next"}, `OK batch `+t1+`=`+c1+` `+t2+`=BLOCKED`, `OK merge `+epic+` `+t1+`=`+c1+` cleanup=-`,
+		`NEXT CHECK `+t1+`\n`, `PROMPT TASK: `+t1+` EPIC: \S+ ROUND: 0 COMMIT: `+c1)
+	if h := e.sh("git rev-parse --short HEAD"); h != c1 || fileExists(wt1) || fileExists(wt2) {
+		t.Fatalf("HEAD %s (want %s), worktrees %v %v", h, c1, fileExists(wt1), fileExists(wt2))
 	}
 }

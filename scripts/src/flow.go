@@ -44,7 +44,7 @@ func taskState(t *Issue) string {
 
 // Step is what the orchestrator does next.
 type Step struct {
-	Kind  string // NEXT COMPLETE STUCK ESCALATE
+	Kind  string // NEXT BATCH COMPLETE STUCK ESCALATE
 	D     Dispatch
 	Text  string
 	Claim bool // a DO whose task is still open: claim it at dispatch
@@ -67,6 +67,24 @@ func computeNext(scope string) Step {
 		mode = "task" // epics planned before review modes existed
 	}
 	kids := children(root.ID)
+	// commits of a parallel batch wait in their worktrees to be merged
+	var picks []*Issue
+	for _, k := range kids {
+		if k.Meta("pdca_wt_commit") != "" {
+			picks = append(picks, k)
+		}
+	}
+	if len(picks) > 0 {
+		d := Dispatch{Phase: "MERGE", ID: root.ID, Epic: root.ID, Base: head, Review: mode, Commits: map[string]string{}}
+		for _, k := range picks {
+			d.Batch = append(d.Batch, k.ID)
+			d.Commits[k.ID] = k.Meta("pdca_wt_commit")
+		}
+		if len(picks) == 1 && fastForward(&d) {
+			return computeNext(scope)
+		}
+		return Step{Kind: "NEXT", D: d}
+	}
 	var inflight []*Issue
 	for _, k := range kids {
 		s := taskState(k)
@@ -100,6 +118,15 @@ func computeNext(scope string) Step {
 		}
 		return naturalLess(ready[i].ID, ready[j].ID)
 	})
+	if root.Meta("pdca_parallel") == "yes" && len(ready) > 1 {
+		// ready tasks don't depend on each other: the planner's graph says
+		// how many run at once, up to maxBatch
+		d := Dispatch{Phase: "BATCH", ID: root.ID, Epic: root.ID, Base: head, Review: mode}
+		for _, r := range ready[:min(maxBatch, len(ready))] {
+			d.Batch = append(d.Batch, r.ID)
+		}
+		return Step{Kind: "BATCH", D: d}
+	}
 	if len(ready) > 0 {
 		r := ready[0]
 		return Step{Kind: "NEXT", Claim: true,
@@ -177,6 +204,8 @@ func roleOf(d *Dispatch) (role, agent string) {
 		return "epic_check", "check"
 	case "EPIC_ACT":
 		return "epic_act", "act"
+	case "MERGE":
+		return "merge", "merge"
 	}
 	if d.Size == "L" {
 		role += "_L"
@@ -188,7 +217,13 @@ func promptOf(d *Dispatch) string {
 	epic := d.Epic
 	switch d.Phase {
 	case "DO":
-		return fmt.Sprintf("TASK: %s EPIC: %s ROUND: 0 BASE: %s MODE: initial", d.ID, epic, short(d.Base))
+		p := fmt.Sprintf("TASK: %s EPIC: %s ROUND: 0 BASE: %s MODE: initial", d.ID, epic, short(d.Base))
+		if d.Worktree != "" {
+			p += fmt.Sprintf(" WORKTREE: %s — other Do agents work beside you: run `pdca worktree %s` first "+
+				"(in Codex with escalated permissions), then run every command, pdca included, inside that worktree "+
+				"and change nothing outside it", d.Worktree, d.ID)
+		}
+		return p
 	case "FIX":
 		return fmt.Sprintf("TASK: %s EPIC: %s ROUND: %d BASE: %s MODE: fix", d.ID, epic, d.Round, short(d.Base))
 	case "CHECK":
@@ -209,11 +244,21 @@ func promptOf(d *Dispatch) string {
 		return p
 	case "EPIC_ACT":
 		return fmt.Sprintf("EPIC_ACT EPIC: %s HEAD: %s ROUND: %d MAX_ROUNDS: %d", d.ID, short(d.Base), d.Round, maxEpicRounds)
+	case "MERGE":
+		var picks []string
+		for _, id := range d.Batch {
+			picks = append(picks, id+"="+short(d.Commits[id]))
+		}
+		return fmt.Sprintf("MERGE EPIC: %s BASE: %s TASKS: %s", d.ID, short(d.Base), strings.Join(picks, " "))
 	}
 	return ""
 }
 
 func printDispatch(d *Dispatch) {
+	if d.Phase == "BATCH" {
+		printBatch(d, false)
+		return
+	}
 	say(fmt.Sprintf("NEXT %s %s", d.Phase, d.ID))
 	_, models := loadModels(currentHarness())
 	role, agent := roleOf(d)
@@ -231,6 +276,9 @@ func printStep(s Step) {
 		}
 		savePending(&s.D)
 		printDispatch(&s.D)
+	case "BATCH":
+		savePending(&s.D)
+		printBatch(&s.D, true)
 	case "COMPLETE":
 		clearPending()
 		say("COMPLETE "+s.D.ID, fmt.Sprintf("then run: %s report %s", p, s.D.ID))
@@ -304,11 +352,19 @@ func settleDo(d *Dispatch, note string) (string, []string) {
 	if note = strings.TrimSpace(note); note != "" {
 		note = fmt.Sprintf("PDCA-DO %s round %d: %s", short(head), d.Round, note)
 	}
+	ok := fmt.Sprintf("OK do %s commit=%s files=%d +%d -%d round=%d", d.ID, short(head), files, added, deleted, d.Round)
+	if d.Worktree != "" {
+		// a Do of a parallel batch: the commit stays in the worktree until MERGE
+		d.once("do "+head, func() string {
+			bdUpdate(d.ID, []string{"pdca_wt_commit=" + head}, nil, note)
+			return ""
+		})
+		return ok + " (worktree)", nil
+	}
 	d.once("do "+head, func() string {
 		bdUpdate(d.ID, []string{"pdca_commit=" + head, "pdca_round=" + itoa(d.Round)}, nil, note)
 		return ""
 	})
-	ok := fmt.Sprintf("OK do %s commit=%s files=%d +%d -%d round=%d", d.ID, short(head), files, added, deleted, d.Round)
 	if d.Review == "epic" {
 		bdClose(d.ID, fmt.Sprintf("PDCA: committed %s; reviewed with the epic", short(head)))
 		ok += " closed (review: epic)"
@@ -441,6 +497,10 @@ func settle(d *Dispatch, note, blocked string) (string, []string) {
 		return settleEpicAct(d)
 	case "REPLAN":
 		return settleReplan(d)
+	case "BATCH":
+		return settleBatch(d)
+	case "MERGE":
+		return settleMerge(d, note)
 	}
 	return "", []string{"unknown pending phase " + d.Phase}
 }
@@ -456,6 +516,10 @@ func finish(d *Dispatch, note, blocked string) int {
 		return 1
 	}
 	say(ok)
+	if d.Worktree != "" {
+		say("WAIT the orchestrator runs " + scriptPath() + " next once every agent of the batch has replied")
+		return 0
+	}
 	printStep(computeNext(d.scope()))
 	return 0
 }
@@ -508,9 +572,10 @@ func cmdDone(args []string) int {
 	if len(pos) > 0 || (flags["--note"] != "" && flags["--blocked"] != "") {
 		usageFail("done")
 	}
-	d := needPending("DO", "FIX", "CHECK", "ACT", "REPLAN", "EPIC_CHECK", "EPIC_ACT")
-	if (flags["--note"] != "" || flags["--blocked"] != "") && d.Phase != "DO" && d.Phase != "FIX" {
-		fail("--note and --blocked are for the Do phase (pending: %s)", d.Phase)
+	d := needPending("DO", "FIX", "CHECK", "ACT", "REPLAN", "EPIC_CHECK", "EPIC_ACT", "MERGE")
+	if (flags["--note"] != "" && d.Phase != "DO" && d.Phase != "FIX" && d.Phase != "MERGE") ||
+		(flags["--blocked"] != "" && d.Phase != "DO" && d.Phase != "FIX") {
+		fail("--note is for Do and Merge, --blocked for Do (pending: %s)", d.Phase)
 	}
 	return finish(d, flags["--note"], flags["--blocked"])
 }
@@ -928,17 +993,18 @@ func planNew(plan *Plan) int {
 	if e.Decisions != "" {
 		notes = "## Autonomous decisions\n" + e.Decisions
 	}
-	_, _, review := loadConfig(currentHarness())
+	_, _, mode := loadConfig(currentHarness())
 	var epic string
 	var ids []string
 	atomically(func() {
 		epic = createIssue(newIssue{title: e.Title, typ: "epic", description: e.Description, design: e.Design,
 			acceptance: e.Acceptance, notes: notes,
-			meta: map[string]string{"pdca_plan": "approved", "pdca_branch": branch, "pdca_base": head, "pdca_review": review}})
+			meta: map[string]string{"pdca_plan": "approved", "pdca_branch": branch, "pdca_base": head, "pdca_review": mode.Review,
+				"pdca_parallel": map[bool]string{true: "yes", false: "no"}[mode.Parallel]}})
 		ids = createTasks(plan.Tasks, epic)
 	})
 	clearPending()
-	say(fmt.Sprintf("OK plan epic=%s tasks=%s decisions=%d review=%s", epic, strings.Join(ids, ","), planDecisions(plan), review))
+	say(fmt.Sprintf("OK plan epic=%s tasks=%s decisions=%d %s", epic, strings.Join(ids, ","), planDecisions(plan), mode))
 	printStep(computeNext(epic))
 	return 0
 }
