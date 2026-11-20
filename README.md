@@ -1,6 +1,6 @@
 # PDCA
 
-[Читать по-русски](README.ru.md)
+[Русский](README.ru.md) · [Français](README.fr.md) · [Español](README.es.md)
 
 PDCA is a skill for Claude Code and Codex that runs larger coding changes through **Plan → Do → Check → Act**. Give it a request with a clear outcome. It breaks the work into tasks, implements them in separate Git commits, reviews the result against the acceptance criteria, and sends failed reviews back for fixes or replanning.
 
