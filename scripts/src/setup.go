@@ -148,14 +148,8 @@ func writeAgents(harness, dir string) []string {
 	return []string{fmt.Sprintf("OK installed %d pdca-* agent file(s) in %s", n, dir)}
 }
 
-// installUser sets up this machine: the skill for Claude Code
-// (~/.claude/skills) and Codex (~/.agents/skills), the pdca command in
-// ~/.local/bin, and the Codex phase agents, which Codex reads only from
-// ~/.codex/agents. Claude Code agents go into the projects that use pdca
-// (pdca init), so it removes the user-level ones older installs wrote. It
-// reports only what it changed, as output lines.
+// installUser links the skill and command. Phase agents are installed per project.
 func installUser() (changed, warns []string) {
-	changed = writeAgents("codex", agentDir("codex"))
 	for _, a := range agentSpecs {
 		p := filepath.Join(claudeHome(), "agents", "pdca-"+a.phase+".md")
 		if text, ok := readFile(p); ok && strings.HasPrefix(text, "---\nname: pdca-"+a.phase+"\n") && os.Remove(p) == nil {
@@ -178,12 +172,15 @@ func installUser() (changed, warns []string) {
 	return changed, warns
 }
 
-// installProject puts the Claude Code phase agents into the repo's
-// .claude/agents. They name this machine's pdca path, so git ignores them
-// through .git/info/exclude and they never dirty the tree.
-func installProject() (changed, warns []string) {
-	changed = writeAgents("claude", agentDir("claude"))
-	const pattern = "/.claude/agents/pdca-*.md"
+// installProject generates phase agents with machine-specific paths and
+// excludes the generated files from git status.
+func installProject(harness string) (changed, warns []string) {
+	changed = writeAgents(harness, agentDir(harness))
+	ext := ".md"
+	if harness == "codex" {
+		ext = ".toml"
+	}
+	pattern := "/." + harness + "/agents/pdca-*" + ext
 	rc, p, e := git("rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
 	text, _ := readFile(p)
 	if rc == 0 && slices.Contains(strings.Split(text, "\n"), pattern) {
@@ -203,14 +200,24 @@ func installProject() (changed, warns []string) {
 }
 
 func cmdInstall(args []string) int {
-	flags, pos := parseArgs("install", args, map[string]bool{"--project": false})
+	flags, pos := parseArgs("install", args, map[string]bool{"--project": false, "--harness": true})
 	if len(pos) > 0 {
 		usageFail("install")
 	}
 	var changed, warns []string
 	if _, project := flags["--project"]; project {
-		changed, warns = installProject()
+		harness := flags["--harness"]
+		if harness == "" {
+			harness = "claude"
+		}
+		if harness != "claude" && harness != "codex" {
+			usageFail("install")
+		}
+		changed, warns = installProject(harness)
 	} else {
+		if flags["--harness"] != "" {
+			usageFail("install")
+		}
 		changed, warns = installUser()
 	}
 	say(warns...)
@@ -223,9 +230,8 @@ func cmdInstall(args []string) int {
 	return 0
 }
 
-// cmdOnce runs pdca in a project that isn't set up for it: it starts a new
-// session of the harness with the phase agents passed in (claude --agents),
-// so the project keeps only beads, where the plan lives.
+// cmdOnce starts a new session with Claude Code session agents or
+// project-local Codex agents. Beads stores the plan.
 func cmdOnce(args []string) int {
 	var extra []string
 	for i, a := range args {
@@ -268,8 +274,9 @@ func cmdOnce(args []string) int {
 // argv (extra are the user's own flags, such as --model) and environment.
 func onceCommand(harness, task string, extra []string) (string, []string, []string) {
 	if harness == "codex" {
-		// Codex reads agents only from ~/.codex/agents
-		say(writeAgents("codex", agentDir("codex"))...)
+		changed, warns := installProject("codex")
+		say(warns...)
+		say(changed...)
 		return "codex", append(append([]string{"codex"}, extra...), "$pdca "+task), os.Environ()
 	}
 	argv := append(append([]string{"claude", "--agents", sessionAgents()}, extra...), "/pdca "+task)
@@ -376,9 +383,13 @@ func bdInit(root string, agents bool) {
 	if rc, o, e := runIn(root, "bd", "init", "--non-interactive", "--skip-agents"); rc != 0 {
 		fail("bd init: %s", firstLine(e, o))
 	}
-	if !agents {
-		return
+	if agents {
+		bdSetup(root)
 	}
+}
+
+// bdSetup adds bd's Codex and Claude Code setup and keeps CLAUDE.md as it was.
+func bdSetup(root string) {
 	claudeMd := filepath.Join(root, "CLAUDE.md")
 	before, had := readFile(claudeMd)
 	for _, recipe := range []string{"codex", "claude"} {
@@ -393,8 +404,8 @@ func bdInit(root string, agents bool) {
 	}
 }
 
-// cmdInit sets up the current project for pdca: this machine's install,
-// beads, and the models section of the project's AGENTS.md. Models come only
+// cmdInit sets up project agents, Beads, and the models section of the
+// project's AGENTS.md. Models come only
 // from the user: without --models and without a section, it says what to ask.
 func cmdInit(args []string) int {
 	flags, pos := parseArgs("init", args, map[string]bool{"--harness": true, "--models": true, "--review": true})
@@ -409,40 +420,50 @@ func cmdInit(args []string) int {
 		fail("--review goes with --models (it is a row of the same AGENTS.md section)")
 	}
 	root := repoRoot()
-	if root == "" {
-		fail("no-git: not inside a git repository (git init and a first commit come first)")
-	}
-	if headSHA() == "" {
-		fail("no-commits: make a first commit, then rerun init")
+	fresh := root == "" || headSHA() == ""
+	if fresh {
+		dir := root
+		if dir == "" {
+			dir, _ = os.Getwd()
+			if dir == pdcaHome() || dir == filepath.Dir(dir) {
+				fail("no-git: won't create a git repository in %s; run init in the project directory", dir)
+			}
+		}
+		bdInit(dir, false) // bd init also runs git init and makes the first commit, of its own files
+		if root = repoRoot(); root == "" || headSHA() == "" {
+			fail("no-commits: bd init made no commit; make a first commit, then rerun init")
+		}
+		say("OK git repository set up by bd init")
 	}
 	dirtyBefore := set(statusPaths()...)
-	newAgents := false // the harness loads agents only at session start
-	func() {
-		// a sandbox may forbid writing the user-level install; the project part still works
-		defer func() {
-			if r := recover(); r != nil {
-				f, ok := r.(failure)
-				if !ok {
-					panic(r)
-				}
-				say("WARN couldn't update the user-level install (" + f.msg + "); run " + scriptPath() + " install outside the sandbox")
-			}
-		}()
-		changed, warns := installUser()
-		say(warns...)
-		say(changed...)
-		newAgents = newAgents || (harness == "codex" && slices.ContainsFunc(changed, func(c string) bool { return strings.Contains(c, "agent file") }))
-	}()
 	if harness == "claude" {
-		changed, warns := installProject()
-		say(warns...)
-		say(changed...)
-		newAgents = newAgents || len(changed) > 0
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					f, ok := r.(failure)
+					if !ok {
+						panic(r)
+					}
+					say("WARN couldn't update the user-level install (" + f.msg + "); run " + scriptPath() + " install outside the sandbox")
+				}
+			}()
+			changed, warns := installUser()
+			say(warns...)
+			say(changed...)
+		}()
 	}
-	if rc, _, _ := run("bd", "where"); rc == 0 {
+	changed, warns := installProject(harness)
+	say(warns...)
+	say(changed...)
+	newAgents := len(changed) > 0
+	if rc, _, _ := run("bd", "where"); rc == 0 && !fresh {
 		say("OK beads already set up")
 	} else {
-		bdInit(root, true)
+		if fresh {
+			bdSetup(root)
+		} else {
+			bdInit(root, true)
+		}
 		say("OK beads initialized (bd init) with its Codex and Claude Code setup")
 	}
 	missing, wroteAgentsMd := false, false

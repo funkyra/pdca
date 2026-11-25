@@ -24,7 +24,7 @@ cd pdca
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The installer symlinks the skill into `~/.claude/skills/pdca` and `~/.agents/skills/pdca`, links the wrapper at `~/.local/bin/pdca`, and generates the Codex agent definitions in `~/.codex/agents/`. Keep the checkout in place so the symlinks resolve. If `~/.local/bin` is already on your `PATH`, you can skip the `export` line. Otherwise, add it to your shell configuration to use `pdca` in future terminals.
+The installer symlinks the skill into `~/.claude/skills/pdca` and `~/.agents/skills/pdca` and links the wrapper at `~/.local/bin/pdca`. Keep the checkout in place so the symlinks resolve. If `~/.local/bin` is already on your `PATH`, you can skip the `export` line. Otherwise, add it to your shell configuration to use `pdca` in future terminals.
 
 ### Set up the repository you want to change
 
@@ -36,7 +36,7 @@ Open a fresh Claude Code or Codex session in the **target repository** and use t
 | Start a run | `/pdca <task>` | `$pdca <task>` |
 | Resume an unfinished run | `/pdca resume` | `$pdca resume` |
 
-`init` initializes Beads if needed, asks for the model and reasoning effort for each phase if they are missing, and generates project-local agents for Claude Code in `.claude/agents/`. Review and commit the setup changes listed in the output, then open a new session to load the agents. The working tree must be clean before starting the first run.
+`init` initializes Beads if needed, asks for the model and reasoning effort for each phase if they are missing, and generates project-local agents in `.claude/agents/` for Claude Code or `.codex/agents/` for Codex. Review and commit the setup changes listed in the output, then open a new session to load the agents. The working tree must be clean before starting the first run.
 
 You can also configure the target repository from the terminal. This example uses Claude Code model aliases.
 
@@ -65,7 +65,7 @@ pdca once --harness claude 'Add a dry-run mode to CSV import'
 pdca once --harness codex 'Add a dry-run mode to CSV import'
 ```
 
-`once` initializes Beads if needed and starts the chosen client with the task. It passes the phase agents into the Claude Code session or sets them up in the Codex user configuration. The run still requires phase models. Put extra client arguments after `--`.
+`once` initializes Beads if needed and starts the chosen client with the task. It passes the phase agents into the Claude Code session or writes them to the project's `.codex/agents/` for Codex. The run still requires phase models. Put extra client arguments after `--`.
 
 ## How it works
 

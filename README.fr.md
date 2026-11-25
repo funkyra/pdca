@@ -24,7 +24,7 @@ cd pdca
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Le programme d’installation crée des liens symboliques vers la compétence dans `~/.claude/skills/pdca` et `~/.agents/skills/pdca`, ajoute un lien vers le script dans `~/.local/bin/pdca` et génère les définitions des agents Codex dans `~/.codex/agents/`. Conservez le dépôt cloné à cet emplacement pour que les liens restent valides. Si `~/.local/bin` figure déjà dans votre `PATH`, vous pouvez omettre la ligne `export`. Sinon, ajoutez-la à la configuration de votre shell pour accéder à `pdca` dans les nouveaux terminaux.
+Le programme d’installation crée des liens symboliques vers la compétence dans `~/.claude/skills/pdca` et `~/.agents/skills/pdca` et ajoute un lien vers le script dans `~/.local/bin/pdca`. Conservez le dépôt cloné à cet emplacement pour que les liens restent valides. Si `~/.local/bin` figure déjà dans votre `PATH`, vous pouvez omettre la ligne `export`. Sinon, ajoutez-la à la configuration de votre shell pour accéder à `pdca` dans les nouveaux terminaux.
 
 ### Configurer le dépôt à modifier
 
@@ -36,7 +36,7 @@ Ouvrez une nouvelle session Claude Code ou Codex dans le **dépôt cible** et ut
 | Lancer une tâche | `/pdca <tâche>` | `$pdca <tâche>` |
 | Reprendre une exécution interrompue | `/pdca resume` | `$pdca resume` |
 
-`init` initialise Beads si nécessaire, demande le modèle et le niveau d’effort de raisonnement de chaque phase s’ils manquent, et crée les agents locaux de Claude Code dans `.claude/agents/`. Vérifiez et validez dans Git les modifications de configuration indiquées dans la sortie, puis ouvrez une nouvelle session pour charger les agents. L’arbre de travail doit être propre avant la première exécution.
+`init` initialise Beads si nécessaire, demande le modèle et le niveau d’effort de raisonnement de chaque phase s’ils manquent, et crée les agents dans le dépôt, sous `.claude/agents/` pour Claude Code ou `.codex/agents/` pour Codex. Vérifiez et validez dans Git les modifications de configuration indiquées dans la sortie, puis ouvrez une nouvelle session pour charger les agents. L’arbre de travail doit être propre avant la première exécution.
 
 Vous pouvez aussi configurer le dépôt cible depuis le terminal. Cet exemple utilise les alias de modèles de Claude Code.
 
@@ -65,7 +65,7 @@ pdca once --harness claude 'Ajoute un mode de simulation à l’import CSV'
 pdca once --harness codex 'Ajoute un mode de simulation à l’import CSV'
 ```
 
-`once` initialise Beads si nécessaire, puis démarre le client choisi avec la tâche. Il fournit les agents de phase à la session Claude Code ou les installe dans la configuration utilisateur de Codex. Les modèles des phases restent nécessaires. Placez les arguments supplémentaires du client après `--`.
+`once` initialise Beads si nécessaire, puis démarre le client choisi avec la tâche. Il fournit les agents de phase à la session Claude Code ou les installe dans le dossier `.codex/agents/` du dépôt pour Codex. Les modèles des phases restent nécessaires. Placez les arguments supplémentaires du client après `--`.
 
 ## Fonctionnement
 

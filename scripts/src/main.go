@@ -19,8 +19,8 @@ The first word of the output is the outcome: OK FAIL WARN NEXT BATCH RETRY COMPL
 
 Orchestrator:
   preflight --harness claude|codex [--branch NAME]  repo, beads, clean tree, agents, models; switch branch
-  install [--project]          set up this machine: skill links, ~/.local/bin/pdca, the Codex agents
-                               (--project: refresh this repo's Claude Code agents)
+  install [--project [--harness claude|codex]]
+                               install skill links and ~/.local/bin/pdca, or refresh project agents
   init [--harness H] [--models "plan=M/E do=M/E check=M/E act=M/E"] [--review epic|task]
                                set up this project to keep using pdca: beads, the models section, the agents
   once [--harness H] TASK [-- HARNESS ARGS]
@@ -69,7 +69,7 @@ var commands map[string]command
 
 var cmdUsage = map[string]string{
 	"preflight":  "preflight --harness claude|codex [--branch NAME]",
-	"install":    "install [--project]",
+	"install":    "install [--project [--harness claude|codex]]",
 	"init":       `init [--harness claude|codex] [--models "plan=M/E do=M/E check=M/E act=M/E"] [--review epic|task]`,
 	"once":       "once [--harness claude|codex] TASK [-- HARNESS ARGS]",
 	"models":     `models [--harness claude|codex] [--set "plan=M/E do=M/E check=M/E act=M/E [review=epic|task] [parallel=yes|no]"]`,

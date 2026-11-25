@@ -369,8 +369,7 @@ func TestInstallInit(t *testing.T) {
 	// an older install left Claude Code agents user-level: they are removed, the project gets its own
 	legacy := filepath.Join(top, "claude", "agents", "pdca-do.md")
 	writeFile(legacy, "---\nname: pdca-do\ndescription: old\n---\nold\n")
-	o := e.run(1, []string{"init"}, `OK installed 5 pdca-\* agent file\(s\) in .*/codex/agents`,
-		`OK removed .*/claude/agents/pdca-do.md`, `OK installed .*/\.local/bin/pdca -> `,
+	o := e.run(1, []string{"init"}, `OK removed .*/claude/agents/pdca-do.md`, `OK installed .*/\.local/bin/pdca -> `,
 		`OK installed 5 pdca-\* agent file\(s\) in `+regexp.QuoteMeta(e.repo)+`/\.claude/agents`,
 		`OK beads initialized`, `FAIL no-models: ask the user`)
 	if st := e.sh("git status --porcelain --untracked-files=all"); fileExists(legacy) || strings.Contains(st, ".claude/agents") {
@@ -413,8 +412,64 @@ func TestInstallInit(t *testing.T) {
 	e.run(0, []string{"preflight", "--harness", "claude", "--branch", "pdca/x"}, `OK .*branch=pdca/x`, `MODELS plan=opus/high .* review=epic`)
 }
 
-// pdca once starts the harness with the agents passed in, so a project that
-// isn't set up for pdca gets a single run without agent files.
+// init without git or without commits: bd init makes the repository and its
+// first commit, and the user's files stay untracked. Never in the home directory.
+func TestInitWithoutGit(t *testing.T) {
+	e := setupEnv(t, "", false)
+	top := filepath.Dir(e.repo)
+	for _, k := range []string{"AUTHOR", "COMMITTER"} {
+		t.Setenv("GIT_"+k+"_NAME", "t")
+		t.Setenv("GIT_"+k+"_EMAIL", "t@example.invalid")
+	}
+	for _, name := range []string{"nogit", "nocommits"} {
+		e.repo = filepath.Join(top, name)
+		os.MkdirAll(e.repo, 0o755)
+		os.Chdir(e.repo)
+		if name == "nocommits" {
+			e.sh("git init -q")
+		}
+		e.sh("echo x > app.py")
+		o := e.run(1, []string{"init"}, `OK git repository set up by bd init`, `OK beads initialized`,
+			`COMMIT before .*AGENTS\.md`, `FAIL no-models`)
+		if strings.Contains(o, "app.py") || e.sh("git log --oneline") == "" || e.sh("git status --porcelain app.py") != "?? app.py" {
+			t.Fatalf("%s: %s\n%s", name, e.sh("git status --porcelain"), o)
+		}
+	}
+	e.repo = top
+	os.Chdir(top)
+	e.run(1, []string{"init"}, `FAIL no-git: won't create a git repository in `)
+	if fileExists(filepath.Join(top, ".git")) {
+		t.Fatal("init made a git repository in the home directory")
+	}
+}
+
+func TestCodexProjectAgents(t *testing.T) {
+	e := setupEnv(t, "", true)
+	initArgs := []string{"init", "--harness", "codex", "--models",
+		"plan=gpt-6.2-astra/high do=gpt-6.2-sol/high check=gpt-6.2-astra/high act=gpt-6.2-sol/medium"}
+	e.run(0, initArgs, "start a new session")
+	for _, phase := range []string{"plan", "do", "check", "act", "merge"} {
+		name := "pdca-" + phase + ".toml"
+		if !fileExists(filepath.Join(e.repo, ".codex", "agents", name)) {
+			t.Errorf("missing project Codex agent %s", name)
+		}
+		if fileExists(filepath.Join(os.Getenv("CODEX_HOME"), "agents", name)) {
+			t.Errorf("init installed Codex agent %s in CODEX_HOME", name)
+		}
+	}
+	if status := e.sh("git status --porcelain --untracked-files=all"); strings.Contains(status, ".codex/agents") {
+		t.Fatalf("project agents appear in git status: %s", status)
+	}
+	e.sh("git add AGENTS.md && git commit -qm models")
+	e.run(0, []string{"preflight", "--harness", "codex"}, "OK root=")
+	writeFile(filepath.Join(e.repo, ".codex", "agents", "pdca-do.toml"), "stale")
+	e.run(1, []string{"preflight", "--harness", "codex"}, "FAIL agents-stale.*install --project --harness codex")
+	e.run(0, []string{"install", "--project", "--harness", "codex"})
+	e.run(0, []string{"preflight", "--harness", "codex"}, "OK root=")
+}
+
+// pdca once passes agents to the Claude Code session and prepares local
+// project agents for Codex.
 func TestOnce(t *testing.T) {
 	e := setupEnv(t, testModels, true)
 	name, argv, env := onceCommand("claude", "add a flag", []string{"--model", "sonnet"})
@@ -438,7 +493,8 @@ func TestOnce(t *testing.T) {
 		t.Fatal("once wrote agents into the project")
 	}
 	name, argv, _ = onceCommand("codex", "add a flag", nil)
-	if name != "codex" || argv[len(argv)-1] != "$pdca add a flag" || !fileExists(filepath.Join(os.Getenv("CODEX_HOME"), "agents", "pdca-do.toml")) {
+	if name != "codex" || argv[len(argv)-1] != "$pdca add a flag" || !fileExists(filepath.Join(e.repo, ".codex", "agents", "pdca-do.toml")) ||
+		fileExists(filepath.Join(os.Getenv("CODEX_HOME"), "agents", "pdca-do.toml")) {
 		t.Fatalf("codex command: %s %q", name, argv)
 	}
 }

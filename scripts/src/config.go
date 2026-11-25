@@ -401,19 +401,13 @@ func agentFile(harness, phase, file, tools, dir string) (string, string) {
 		fmt.Sprintf("name = \"pdca-%s\"\ndescription = \"%s\"\ndeveloper_instructions = '''\n%s'''\n", phase, desc, body)
 }
 
-// agentDir is where the harness reads the phase agents from. Claude Code:
-// the project's .claude/agents, so projects that don't use pdca never see
-// them. Codex reads only ~/.codex/agents (codex-cli 0.166 ignores a project's
-// .codex/agents, trusted or not).
+// agentDir is the project-scoped directory for the harness's phase agents.
 func agentDir(harness string) string {
-	if harness == "codex" {
-		return filepath.Join(codexHome(), "agents")
-	}
 	root := repoRoot()
 	if root == "" {
 		fail("not inside a git repository")
 	}
-	return filepath.Join(root, ".claude", "agents")
+	return filepath.Join(root, "."+harness, "agents")
 }
 
 // sessionAgents is the phase agents as the JSON that `claude --agents`
@@ -443,19 +437,16 @@ func agentsProblem(harness string) string {
 			stale = append(stale, "pdca-"+a.phase)
 		}
 	}
-	fix := scriptPath() + " install"
-	if harness == "claude" {
-		fix += " --project"
-	}
+	fix := scriptPath() + " install --project --harness " + harness
 	switch {
 	case len(stale) == 0:
 		return ""
 	case found:
 		return fmt.Sprintf("agents-stale: %s in %s differ from the phase files; run %s, then start a new session",
 			strings.Join(stale, ", "), d, fix)
-	case harness == "claude":
-		return fmt.Sprintf("no-agents: this project isn't set up for pdca. To keep using pdca here: %s init (or /pdca init), "+
-			"then a new session. For a single run: leave this session and start `pdca once \"<task>\"` in a terminal in the repo", scriptPath())
+	default:
+		return fmt.Sprintf("no-agents: this project isn't set up for pdca. Run %s init --harness %s (or %s init), "+
+			"then start a new session. For a single run: start `pdca once --harness %s \"<task>\"` in a terminal in the repo",
+			scriptPath(), harness, invocation(harness), harness)
 	}
-	return fmt.Sprintf("no-agents: run %s, then start a new session so Codex loads the pdca-* agents", fix)
 }

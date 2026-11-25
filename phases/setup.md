@@ -2,12 +2,14 @@
 
 ## `/pdca init`
 
-Run `pdca init --harness <claude|codex>`, adding `--models "plan=<m>/<e>
+Run `pdca init --harness <claude|codex>` (in Codex with escalated
+permissions: it writes `.codex` and `.git`), adding `--models "plan=<m>/<e>
 do=<m>/<e> check=<m>/<e> act=<m>/<e>"` and `--review epic|task` if the user
 gave them (`parallel=yes` goes inside `--models`). On `FAIL no-models`, ask
-the user for the models (below), then run it again with their answers. Relay
-what it printed, including the files it asks to commit and the new session it
-asks for, and stop.
+the user for the models (below), then run it again with their answers. When
+it prints a `COMMIT` line, ask the user whether to commit those files; on yes,
+look over their changes and commit them. Relay the rest of what it printed,
+including the new session it asks for, and stop.
 
 ## `FAIL no-models` from preflight
 

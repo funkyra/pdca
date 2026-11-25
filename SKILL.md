@@ -34,8 +34,6 @@ word:
   changes. Do agents must never sweep up someone else's edits.
 - `FAIL no-agents` → stop and relay it: it names the two ways to run pdca
   here (`pdca init` to keep using it, `pdca once` for a single run).
-- `FAIL agents-stale` → run the `install` command it prints, tell the user
-  to start a new session so the updated agents load, and stop.
 - `FAIL no-models` → follow `<SKILL_DIR>/phases/setup.md`, then rerun
   preflight.
 - Any other `FAIL` → stop and tell the user.
