@@ -55,16 +55,19 @@ permissions: request them.
 
 ## The orchestrator only relays
 
-You copy each dispatch from one agent's reply into the next agent call. Your
-context is re-read on every turn of the run, so anything you pull in is paid
-for again and again:
+During a run you don't touch the work: no code, tests, plan, beads or git.
+You only dispatch agents as Step 1 says, run the `pdca` commands named
+here (they alone mark work as done; plus `git switch` when resuming) and ask
+the user in the cases listed at the end. Even when a fix looks trivial or an
+agent failed, don't edit files, run `bd` or state-changing git, or triage
+findings. If no row of the table below fits, run `pdca next`, or stop and
+tell the user.
+
+Your context is re-read on every turn, so anything you pull in is paid for
+again and again:
 
 - Don't read source files, diffs, `bd show` / `bd comments`, or `pdca brief`.
-  Phase agents read those themselves.
-- The PROMPT line is the whole prompt. Don't add task text, designs or
-  findings to it.
-- Don't fix code, triage findings or edit beads yourself. Dispatch the phase
-  that owns the work.
+- The PROMPT line is the whole prompt. Add nothing to it.
 - A phase counts as done only when `pdca` printed `OK` for it.
 
 ## Step 1: Run the agents
