@@ -12,6 +12,88 @@ var wholeRepo = []string{"--", ":/", ":(top,exclude).beads"}
 
 func gitDiff(args ...string) string { return gitOK(append(args, wholeRepo...)...) }
 
+// briefPart bounds one part of a review diff. A longer tool output loses
+// part of itself: Claude Code moves output over 30000 characters to a file
+// that costs the agent another turn, and Codex (0.171, by default) silently
+// cuts the middle of output over 10000 tokens.
+const briefPart = 22000
+
+// reviewDiff is the diff a Check reviews; ok is false for a dispatch without one.
+func reviewDiff(d *Dispatch) (title, diff string, ok bool) {
+	switch {
+	case d.Phase == "CHECK":
+		return "=== diff", gitDiff("show", "--format=", d.Commit), true
+	case d.Phase == "EPIC_CHECK" && d.Full && d.From != "":
+		return "=== diff " + short(d.From) + "..HEAD", gitDiff("diff", d.From+"..HEAD"), true
+	}
+	return "", "", false
+}
+
+// diffParts is that diff in parts of at most briefPart bytes.
+func diffParts(d *Dispatch) (title string, parts []string) {
+	title, diff, ok := reviewDiff(d)
+	if !ok {
+		return "", nil
+	}
+	return title, splitDiff(diff)
+}
+
+// splitDiff cuts at file boundaries where possible. A part that starts inside
+// a file opens with "(continued) " and that file's diff --git line.
+func splitDiff(s string) []string {
+	var parts []string
+	file := "" // the diff --git line of the file a cut lands in
+	for len(s) > briefPart {
+		cut := strings.LastIndex(s[:briefPart], "\ndiff --git ")
+		inFile := cut < briefPart/2
+		if inFile {
+			cut = strings.LastIndexByte(s[:briefPart], '\n')
+		}
+		if cut <= 0 {
+			parts, s = append(parts, s[:briefPart]), s[briefPart:]
+			continue
+		}
+		head, rest := s[:cut], s[cut+1:]
+		if h := strings.LastIndex("\n"+head, "\ndiff --git "); h >= 0 {
+			file, _, _ = strings.Cut(head[h:], "\n")
+		}
+		if inFile && file != "" {
+			rest = "(continued) " + file + "\n" + rest
+		}
+		parts, s = append(parts, head), rest
+	}
+	return append(parts, s)
+}
+
+// diffPartCount is the number of parts the dispatch tells a Check to fetch;
+// 0 when its diff fits one tool output.
+func diffPartCount(d *Dispatch) int {
+	if _, parts := diffParts(d); len(parts) > 1 {
+		return len(parts)
+	}
+	return 0
+}
+
+// sayDiff prints the whole diff, or, for a dispatch with PARTS, where its
+// parts are: each comes from its own `pdca brief --part N`.
+func sayDiff(d *Dispatch) {
+	title, diff, _ := reviewDiff(d)
+	if d.Parts > 1 {
+		say(fmt.Sprintf("%s: in %d parts, printed by `pdca brief --part 1` … `--part %d`", title, d.Parts, d.Parts))
+		return
+	}
+	say(title, diff)
+}
+
+// epicFrom is where an epic review's diff starts: the epic base, in later
+// rounds the commit the previous review saw.
+func epicFrom(e *Issue, round int) string {
+	if prev := e.Meta("pdca_epic_check_sha"); round > 0 && prev != "" {
+		return prev
+	}
+	return e.Meta("pdca_base")
+}
+
 func section(title, text string) {
 	if text = strings.TrimSpace(text); text != "" {
 		say("=== "+title, text)
@@ -79,7 +161,17 @@ func nextFinding(cs []Comment, prefix string) int {
 // cmdBrief prints what a phase agent reads. Without an ID it briefs the
 // pending dispatch, phase by phase; with one it prints that task or epic.
 func cmdBrief(args []string) int {
-	_, pos := parseArgs("brief", args, map[string]bool{})
+	flags, pos := parseArgs("brief", args, map[string]bool{"--part": true})
+	if p, ok := flags["--part"]; ok {
+		d := needPending("CHECK", "EPIC_CHECK")
+		title, parts := diffParts(d)
+		n := atoi(p)
+		if len(pos) > 0 || n < 1 || n > len(parts) {
+			fail("the brief has %d part(s)", max(len(parts), 1))
+		}
+		say(fmt.Sprintf("%s (part %d of %d)", title, n, len(parts)), parts[n-1])
+		return 0
+	}
 	switch len(pos) {
 	case 1:
 		briefID(pos[0])
@@ -180,7 +272,7 @@ func briefCheck(d *Dispatch) {
 		}
 	}
 	say("=== commit", gitOK("show", "--stat", "--format=commit %H%n%n%B", d.Commit))
-	say("=== diff", gitDiff("show", "--format=", d.Commit))
+	sayDiff(d)
 }
 
 func briefAct(d *Dispatch) {
@@ -250,18 +342,19 @@ func briefEpicCheck(d *Dispatch) {
 			say("notes: " + n)
 		}
 	}
-	from := base
+	if d.From == "" {
+		d.From = epicFrom(e, d.Round) // dispatched by an older pdca
+	}
 	if prev := e.Meta("pdca_epic_check_sha"); d.Round > 0 && prev != "" {
-		from = prev
 		section("the previous review (newest PDCA-CHECK-EPIC)", newestComment(cs, "PDCA-CHECK-EPIC "))
 		section("the fix decision (newest PDCA-ACT-EPIC)", newestComment(cs, "PDCA-ACT-EPIC "))
 	}
 	say("=== numbering", fmt.Sprintf("number new findings from F%d", nextFinding(cs, "PDCA-CHECK-EPIC ")))
-	if from == "" {
+	if d.From == "" {
 		return
 	}
-	say("=== commits "+short(from)+"..HEAD", gitOK("log", "--format=%h %s", from+"..HEAD"))
-	say("=== diff "+short(from)+"..HEAD", gitDiff("diff", from+"..HEAD"))
+	say("=== commits "+short(d.From)+"..HEAD", gitOK("log", "--format=%h %s", d.From+"..HEAD"))
+	sayDiff(d)
 }
 
 func briefEpicAct(d *Dispatch) {

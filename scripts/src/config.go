@@ -72,6 +72,8 @@ type Dispatch struct {
 	Review   string `json:"review,omitempty"`   // the epic's review mode: epic | task
 	Final    bool   `json:"final,omitempty"`    // CHECK of the epic's last open task (review: task)
 	Full     bool   `json:"full,omitempty"`     // EPIC_CHECK that is the only code review (review: epic)
+	From     string `json:"from,omitempty"`     // EPIC_CHECK: where the reviewed diff starts
+	Parts    int    `json:"parts,omitempty"`    // CHECK / EPIC_CHECK: diff parts for `brief --part`, 0 = whole
 	Recorded bool   `json:"recorded,omitempty"` // review / act file applied
 	LastFail string `json:"last_fail,omitempty"`
 	// parallel Do ("- parallel: yes"): the tasks of a BATCH or MERGE, in

@@ -144,7 +144,7 @@ func computeNext(scope string) Step {
 	d := Dispatch{ID: root.ID, Epic: root.ID, Round: atoi(root.Meta("pdca_epic_round")), Base: head, Review: mode, Full: mode == "epic"}
 	switch {
 	case !sameSHA(root.Meta("pdca_epic_check_sha"), head):
-		d.Phase = "EPIC_CHECK"
+		d.Phase, d.From = "EPIC_CHECK", epicFrom(root, d.Round)
 	case !sameSHA(root.Meta("pdca_epic_act_sha"), head):
 		d.Phase = "EPIC_ACT"
 	case root.Meta("pdca_epic_act") == "ESCALATE":
@@ -231,7 +231,7 @@ func promptOf(d *Dispatch) string {
 		if d.Final {
 			p += " FINAL: yes"
 		}
-		return p
+		return p + partsOf(d)
 	case "ACT":
 		return fmt.Sprintf("TASK: %s EPIC: %s ROUND: %d COMMIT: %s MAX_ROUNDS: %d", d.ID, epic, d.Round, short(d.Commit), maxTaskRounds)
 	case "REPLAN":
@@ -241,7 +241,7 @@ func promptOf(d *Dispatch) string {
 		if d.Full {
 			p += " REVIEW: full"
 		}
-		return p
+		return p + partsOf(d)
 	case "EPIC_ACT":
 		return fmt.Sprintf("EPIC_ACT EPIC: %s HEAD: %s ROUND: %d MAX_ROUNDS: %d", d.ID, short(d.Base), d.Round, maxEpicRounds)
 	case "MERGE":
@@ -250,6 +250,15 @@ func promptOf(d *Dispatch) string {
 			picks = append(picks, id+"="+short(d.Commits[id]))
 		}
 		return fmt.Sprintf("MERGE EPIC: %s BASE: %s TASKS: %s", d.ID, short(d.Base), strings.Join(picks, " "))
+	}
+	return ""
+}
+
+// partsOf tells a Check how many parts its diff has, so it fetches them all
+// in its first turn.
+func partsOf(d *Dispatch) string {
+	if d.Parts > 1 {
+		return fmt.Sprintf(" PARTS: %d", d.Parts)
 	}
 	return ""
 }
@@ -274,6 +283,7 @@ func printStep(s Step) {
 		if s.Claim {
 			bdClaim(s.D.ID)
 		}
+		s.D.Parts = diffPartCount(&s.D)
 		savePending(&s.D)
 		printDispatch(&s.D)
 	case "BATCH":

@@ -653,3 +653,50 @@ func TestParallelFastForward(t *testing.T) {
 		t.Fatalf("HEAD %s (want %s), worktrees %v %v", h, c1, fileExists(wt1), fileExists(wt2))
 	}
 }
+
+func TestBriefParts(t *testing.T) {
+	e := newEnv(t, "")
+	e.run(0, []string{"install", "--project"}, `OK`)
+	e.run(0, []string{"preflight", "--harness", "claude", "--branch", "pdca/p"}, `review=epic`)
+	o := e.run(0, []string{"plan-apply", e.file("plan.md", "# Epic: Big\nreq\n## Design\nd\n## Acceptance\n- works\n"+
+		"# Task: A\nSize: S\nga\n## Acceptance\n- a ok\n")}, `NEXT DO `)
+	t1 := field(o, `NEXT DO (\S+)`)
+	e.sh("for f in one two; do for i in $(seq 1500); do echo \"$f = $i\"; done > $f.py; done")
+	e.sh("git add one.py two.py && git commit -qm 'feat: big' -m 'Bead: " + t1 + "'")
+	e.run(0, []string{"done"}, `NEXT EPIC_CHECK`, `REVIEW: full PARTS: 2\n`)
+	o = e.run(0, []string{"brief"}, `=== diff \S+\.\.HEAD: in 2 parts, printed by .*--part 1.*--part 2`)
+	if strings.Contains(o, "one = 1") {
+		t.Fatalf("with PARTS the brief should leave the diff to --part:\n%s", o[len(o)-300:])
+	}
+	o = e.run(0, []string{"brief", "--part", "1"}, `^=== diff \S+\.\.HEAD \(part 1 of 2\)\ndiff --git a/one.py`, `\+one = 1500\n$`)
+	if strings.Contains(o, "two = 1") {
+		t.Fatalf("part 1 should end at a file boundary:\n%s", o[len(o)-300:])
+	}
+	e.run(0, []string{"brief", "--part", "2"}, `^=== diff \S+\.\.HEAD \(part 2 of 2\)\ndiff --git a/two.py`, `\+two = 1500\n$`)
+	e.run(1, []string{"brief", "--part", "3"}, `FAIL the brief has 2 part`)
+}
+
+func TestSplitDiff(t *testing.T) {
+	hdr := "diff --git a/x.py b/x.py"
+	s := hdr + "\n" + strings.Repeat("+abcdefghi\n", 5000) // one file: cut at lines
+	parts := splitDiff(s)
+	if len(parts) != 3 {
+		t.Fatalf("got %d parts", len(parts))
+	}
+	rejoined := parts[0]
+	for i, p := range parts {
+		if len(p) > briefPart {
+			t.Fatalf("part %d has %d bytes", i+1, len(p))
+		}
+		if i > 0 {
+			rest, ok := strings.CutPrefix(p, "(continued) "+hdr+"\n")
+			if !ok {
+				t.Fatalf("part %d should name its file: %q", i+1, p[:60])
+			}
+			rejoined += "\n" + rest
+		}
+	}
+	if rejoined != s {
+		t.Fatal("parts don't rejoin to the diff")
+	}
+}

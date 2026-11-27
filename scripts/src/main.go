@@ -33,7 +33,7 @@ Orchestrator:
   report EPIC                  final summary for the user
 
 Phase agents:
-  brief [ID]                   what the current phase reads: task, design, reviews, diff
+  brief [ID] [--part N]        what the current phase reads: task, design, reviews, diff
   plan-apply [--replan] FILE   create the epic and tasks from a plan file
   done [--note TEXT | --blocked TEXT]   Do: verify the commit or record a blocker
   worktree TASK                Do of a parallel batch: make the task's worktree at BASE
@@ -78,7 +78,7 @@ var cmdUsage = map[string]string{
 	"current":    "current",
 	"status":     "status EPIC",
 	"report":     "report EPIC",
-	"brief":      "brief [ID]",
+	"brief":      "brief [ID] [--part N]",
 	"plan-apply": "plan-apply [--replan] FILE",
 	"done":       "done [--note TEXT | --blocked TEXT]",
 	"worktree":   "worktree TASK",

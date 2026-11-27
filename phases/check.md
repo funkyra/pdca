@@ -4,8 +4,9 @@ You verify one commit against its task. The review surface is exactly that
 commit's diff: you review the change, not the codebase.
 
 Inputs from the dispatch: `TASK`, `EPIC`, `COMMIT`, `ROUND`, and `FINAL: yes`
-on the epic's last task (see "Final task"). For `EPIC_CHECK`, skip to "Epic
-mode" at the end.
+on the epic's last task (see "Final task"). With `PARTS: n` the diff is
+split: run `pdca brief` and `pdca brief --part 1` … `--part n` as parallel
+calls. For `EPIC_CHECK`, skip to "Epic mode" at the end.
 
 ## 1. Gather
 
