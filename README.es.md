@@ -80,6 +80,21 @@ La sesión principal inicia un agente nuevo para cada fase. La CLI escrita en Go
 
 Beads guarda la épica, las dependencias, las referencias a commits, las revisiones y las decisiones. Git conserva los cambios de código. El directorio `.pdca/`, que Git ignora, contiene el estado local, incluida la fase pendiente. Al reanudar una ejecución, PDCA usa ese estado, Beads y Git para comprobar dónde quedó el trabajo y determinar la fase siguiente.
 
+## Coste frente a una sola sesión
+
+Medido en noviembre de 2026 con Claude Code 2.1.332. La tarea consiste en añadir transacciones recurrentes y presupuestos mensuales a una app de Python de unas 2.3k líneas; el resultado cambió alrededor de 1k líneas. PDCA usó la sesión principal en Sonnet/medium, Plan y Check en Opus y Do en Sonnet. La sesión única fue Opus/high con la misma petición y sin la skill.
+
+| | PDCA (2 ejecuciones) | Sesión única (1 ejecución) |
+| --- | --- | --- |
+| Coste | $1.41–1.43 | $1.57 |
+| Tokens | 1.04–1.09M | 1.31M |
+| Tiempo | 374–375 s | 347 s |
+| La funcionalidad funciona (todos los tests y comprobaciones de extremo a extremo) | sí | sí |
+| Commits | uno por tarea, en una rama aparte | ninguno: todo quedó sin confirmar en `main` |
+| Plan, criterios de aceptación, revisión y decisiones registrados | sí, en Beads | no |
+
+A este tamaño, un modelo potente por sí solo también implementa bien la funcionalidad. Con PDCA el mismo resultado cuesta un 10% menos, tarda un tiempo similar y llega como commits revisados por tarea con las decisiones registradas. La variación entre ejecuciones es de un 5–10%.
+
 ## Configuración
 
 PDCA lee el primer archivo `AGENTS.md` que contiene una sección `PDCA models` para el cliente elegido. Busca desde la raíz del repositorio hacia los directorios superiores y, por defecto, termina consultando `~/.codex/AGENTS.md`. `pdca init --models` escribe la sección en el archivo `AGENTS.md` del repositorio. Si no hay ninguna sección que coincida, `pdca models --set` permite guardar la configuración localmente en `.pdca/`.

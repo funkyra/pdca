@@ -80,6 +80,21 @@ La session principale lance un nouvel agent à chaque phase. Le CLI écrit en Go
 
 Beads conserve l’epic, les dépendances des tâches, les références de commits, les revues et les décisions. Git conserve les modifications du code. Le répertoire `.pdca/`, ignoré par Git, contient l’état local, dont la phase en cours. À la reprise, PDCA utilise cet état, Beads et Git pour vérifier où le travail s’est arrêté et déterminer la phase suivante.
 
+## Coût comparé à une session unique
+
+Mesuré en novembre 2026 avec Claude Code 2.1.332. La tâche consiste à ajouter des transactions récurrentes et des budgets mensuels à une application Python d'environ 2,3k lignes ; le résultat a modifié environ 1k lignes. PDCA tournait avec la session principale sur Sonnet/medium, Plan et Check sur Opus, Do sur Sonnet. La session unique était Opus/high, avec la même demande et sans la skill.
+
+| | PDCA (2 exécutions) | Session unique (1 exécution) |
+| --- | --- | --- |
+| Coût | 1,41–1,43 $ | 1,57 $ |
+| Tokens | 1,04–1,09M | 1,31M |
+| Durée | 374–375 s | 347 s |
+| La fonctionnalité marche (suite de tests complète et vérifications de bout en bout) | oui | oui |
+| Commits | un par tâche, sur une branche dédiée | aucun : tout est resté non commité sur `main` |
+| Plan, critères d'acceptation, revue et décisions consignés | oui, dans Beads | non |
+
+À cette taille, un modèle puissant seul réalise lui aussi correctement la fonctionnalité. Avec PDCA, le même résultat coûte environ 10 % de moins, prend un temps comparable et arrive sous forme de commits revus par tâche, avec les décisions consignées. La variation d'une exécution à l'autre est d'environ 5–10 %.
+
 ## Configuration
 
 PDCA lit le premier fichier `AGENTS.md` qui contient une section `PDCA models` pour le client choisi. La recherche commence à la racine du dépôt, remonte dans ses répertoires parents, puis consulte `~/.codex/AGENTS.md` par défaut. `pdca init --models` écrit cette section dans le fichier `AGENTS.md` du dépôt. Si aucune section ne correspond, `pdca models --set` permet de sauvegarder les paramètres localement dans `.pdca/`.

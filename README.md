@@ -80,6 +80,21 @@ The main session dispatches a fresh agent for each phase. The Go CLI verifies ea
 
 Beads stores the epic, task dependencies, commit references, reviews, and decisions. Git holds the code changes. The Git-ignored `.pdca/` directory holds local state, including the pending dispatch. A resumed run uses that state, Beads, and Git to verify where it left off and pick up the next phase.
 
+## Cost compared with a single session
+
+Measured in November 2026 with Claude Code 2.1.332. The task is to add recurring transactions and monthly budgets to a ~2.3k-line Python app; the result was about 1k changed lines. PDCA ran with the main session on Sonnet/medium, Plan and Check on Opus, and Do on Sonnet. The single session was Opus/high with the same request and no skill.
+
+| | PDCA (2 runs) | Single session (1 run) |
+| --- | --- | --- |
+| Cost | $1.41–1.43 | $1.57 |
+| Tokens | 1.04–1.09M | 1.31M |
+| Wall time | 374–375 s | 347 s |
+| Feature works (full test suite and end-to-end checks) | yes | yes |
+| Commits | one per task, on a separate branch | none: all changes left uncommitted on `main` |
+| Plan, acceptance criteria, review and decisions recorded | yes, in Beads | no |
+
+At this size a strong model alone gets the feature right too. With PDCA the same result costs about 10% less, takes a similar time, and arrives as reviewed, per-task commits with the decisions on record. Run-to-run variation is about 5–10%.
+
 ## Configuration
 
 PDCA reads the first `AGENTS.md` with a `PDCA models` section for the selected client. It searches from the repository root through its parent directories, then checks `~/.codex/AGENTS.md` by default. `pdca init --models` writes the section to the repository's `AGENTS.md`. If there is no matching section, `pdca models --set` can save the settings locally in `.pdca/`.
