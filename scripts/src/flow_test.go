@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 type env struct {
@@ -698,5 +699,26 @@ func TestSplitDiff(t *testing.T) {
 	}
 	if rejoined != s {
 		t.Fatal("parts don't rejoin to the diff")
+	}
+}
+
+func TestSplitDiffLongLines(t *testing.T) {
+	hdr := "diff --git a/vendor.js b/vendor.js"
+	long := "+" + strings.Repeat("ж", 64*1024) + "\n" // 128 KB in one line, 2-byte runes
+	s := hdr + "\n" + strings.Repeat("+x\n", 9000) + long + long + "+end\n"
+	parts := splitDiff(s)
+	if len(parts) > 2*len(s)/briefPart+1 {
+		t.Fatalf("%d parts for %d bytes", len(parts), len(s))
+	}
+	for i, p := range parts {
+		if len(p) > briefPart+len(hdr)+13 || !utf8.ValidString(p) {
+			t.Fatalf("part %d: %d bytes, valid UTF-8 %v", i+1, len(p), utf8.ValidString(p))
+		}
+		if i > 0 && !strings.HasPrefix(p, "(continued) "+hdr+"\n") {
+			t.Fatalf("part %d should name its file: %q", i+1, p[:40])
+		}
+	}
+	if !strings.HasSuffix(parts[len(parts)-1], "+end\n") {
+		t.Fatal("the diff's end is missing")
 	}
 }

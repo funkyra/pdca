@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // wholeRepo limits a diff to the repository without beads' files. Pathspecs
@@ -38,8 +39,11 @@ func diffParts(d *Dispatch) (title string, parts []string) {
 	return title, splitDiff(diff)
 }
 
-// splitDiff cuts at file boundaries where possible. A part that starts inside
-// a file opens with "(continued) " and that file's diff --git line.
+// splitDiff cuts at file boundaries where possible, else at a line end, and
+// inside a line only when no line ends in the second half of the part (a
+// minified file). Every part but the last is at least briefPart/2 bytes of
+// the diff, so the loop always moves on. A part that starts inside a file
+// opens with "(continued) " and that file's diff --git line.
 func splitDiff(s string) []string {
 	var parts []string
 	file := "" // the diff --git line of the file a cut lands in
@@ -49,11 +53,16 @@ func splitDiff(s string) []string {
 		if inFile {
 			cut = strings.LastIndexByte(s[:briefPart], '\n')
 		}
-		if cut <= 0 {
-			parts, s = append(parts, s[:briefPart]), s[briefPart:]
-			continue
+		var head, rest string
+		if cut < briefPart/2 {
+			cut = briefPart
+			for cut > briefPart/2 && !utf8.RuneStart(s[cut]) {
+				cut--
+			}
+			head, rest = s[:cut], s[cut:]
+		} else {
+			head, rest = s[:cut], s[cut+1:]
 		}
-		head, rest := s[:cut], s[cut+1:]
 		if h := strings.LastIndex("\n"+head, "\ndiff --git "); h >= 0 {
 			file, _, _ = strings.Cut(head[h:], "\n")
 		}
